@@ -1,0 +1,24 @@
+[package]
+name = "utils"
+version = "0.1.0"
+edition.workspace = true
+description = "Utility functions and types for the editor"
+license = "GPL-3.0-or-later"
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+dirs-next.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+log.workspace = true
+thiserror.workspace = true
+time.workspace = true
+workspace-hack.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
