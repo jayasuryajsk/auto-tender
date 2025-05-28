@@ -363,8 +363,8 @@ impl TerminalBuilder {
                 .or_insert_with(|| "en_US.UTF-8".to_string());
         }
 
-        env.insert("ZED_TERM".to_string(), "true".to_string());
-        env.insert("TERM_PROGRAM".to_string(), "zed".to_string());
+        env.insert("AUTO_TENDER_TERM".to_string(), "true".to_string());
+        env.insert("TERM_PROGRAM".to_string(), "auto-tender".to_string());
         env.insert("TERM".to_string(), "xterm-256color".to_string());
         env.insert(
             "TERM_PROGRAM_VERSION".to_string(),

@@ -61,7 +61,7 @@ use zed::{
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
-    let message = "Zed failed to launch";
+    let message = "Auto Tender failed to launch";
     let error_details = errors
         .into_iter()
         .flat_map(|(kind, paths)| {
@@ -124,7 +124,7 @@ fn fail_to_open_window_async(e: anyhow::Error, cx: &mut AsyncApp) {
 
 fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
     eprintln!(
-        "Zed failed to open a window: {e:?}. See https://zed.dev/docs/linux for troubleshooting steps."
+        "Auto Tender failed to open a window: {e:?}. See https://autotender.dev/docs/linux for troubleshooting steps."
     );
     #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     {
@@ -139,14 +139,14 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
                 process::exit(1);
             };
 
-            let notification_id = "com.tenderai.Oops";
+            let notification_id = "com.autotender.Oops";
             proxy
                 .add_notification(
                     notification_id,
-                    Notification::new("Zed failed to launch")
+                    Notification::new("Auto Tender failed to launch")
                         .body(Some(
                             format!(
-                                "{e:?}. See https://zed.dev/docs/linux for troubleshooting steps."
+                                "{e:?}. See https://autotender.dev/docs/linux for troubleshooting steps."
                             )
                             .as_str(),
                         ))
@@ -226,11 +226,11 @@ fn main() {
             app_commit_sha.clone(),
             *release_channel::RELEASE_CHANNEL,
         );
-        println!("Zed System Specs (from CLI):\n{}", system_specs);
+        println!("Auto Tender System Specs (from CLI):\n{}", system_specs);
         return;
     }
 
-    log::info!("========== starting zed ==========");
+    log::info!("========== starting auto-tender ==========");
 
     let mut app = Application::new().with_assets(Assets);
 
@@ -274,7 +274,7 @@ fn main() {
             }
         };
     if failed_single_instance_check {
-        println!("zed is already running");
+        println!("auto-tender is already running");
         return;
     }
 
@@ -343,7 +343,7 @@ fn main() {
         handle_keymap_file_changes(user_keymap_file_rx, cx);
         client::init_settings(cx);
         let user_agent = format!(
-            "Zed/{} ({}; {})",
+            "Auto Tender/{} ({}; {})",
             AppVersion::global(cx),
             std::env::consts::OS,
             std::env::consts::ARCH
@@ -1012,39 +1012,39 @@ fn stdout_is_a_pty() -> bool {
 }
 
 #[derive(Parser, Debug)]
-#[command(name = "zed", disable_version_flag = true)]
+#[command(name = "auto-tender", disable_version_flag = true)]
 struct Args {
     /// A sequence of space-separated paths or urls that you want to open.
     ///
     /// Use `path:line:row` syntax to open a file at a specific location.
     /// Non-existing paths and directories will ignore `:line:row` suffix.
     ///
-    /// URLs can either be `file://` or `zed://` scheme, or relative to <https://zed.dev>.
+    /// URLs can either be `file://` or `autotender://` scheme, or relative to <https://autotender.dev>.
     paths_or_urls: Vec<String>,
 
     /// Sets a custom directory for all user data (e.g., database, extensions, logs).
     /// This overrides the default platform-specific data directory location.
-    /// On macOS, the default is `~/Library/Application Support/Zed`.
-    /// On Linux/FreeBSD, the default is `$XDG_DATA_HOME/zed`.
-    /// On Windows, the default is `%LOCALAPPDATA%\Zed`.
+    /// On macOS, the default is `~/Library/Application Support/Auto Tender`.
+    /// On Linux/FreeBSD, the default is `$XDG_DATA_HOME/auto-tender`.
+    /// On Windows, the default is `%LOCALAPPDATA%\Auto Tender`.
     #[arg(long, value_name = "DIR")]
     user_data_dir: Option<String>,
 
-    /// Instructs zed to run as a dev server on this machine. (not implemented)
+    /// Instructs auto-tender to run as a dev server on this machine. (not implemented)
     #[arg(long)]
     dev_server_token: Option<String>,
 
     /// Prints system specs. Useful for submitting issues on GitHub when encountering a bug
-    /// that prevents Zed from starting, so you can't run `zed: copy system specs to clipboard`
+    /// that prevents Auto Tender from starting, so you can't run `auto-tender: copy system specs to clipboard`
     #[arg(long)]
     system_specs: bool,
 
     /// Used for SSH/Git password authentication, to remove the need for netcat as a dependency,
-    /// by having Zed act like netcat communicating over a Unix socket.
+    /// by having Auto Tender act like netcat communicating over a Unix socket.
     #[arg(long, hide = true)]
     askpass: Option<String>,
 
-    /// Run zed in the foreground, only used on Windows, to match the behavior of the behavior on macOS.
+    /// Run auto-tender in the foreground, only used on Windows, to match the behavior of the behavior on macOS.
     #[arg(long)]
     #[cfg(target_os = "windows")]
     #[arg(hide = true)]
@@ -1076,8 +1076,8 @@ fn parse_url_arg(arg: &str, cx: &App) -> Result<String> {
         Ok(path) => Ok(format!("file://{}", path.display())),
         Err(error) => {
             if arg.starts_with("file://")
-                || arg.starts_with("zed-cli://")
-                || arg.starts_with("ssh://")
+                || arg.starts_with("autotender-cli://")
+                || arg.starts_with("autotender://")
                 || parse_zed_link(arg, cx).is_some()
             {
                 Ok(arg.into())

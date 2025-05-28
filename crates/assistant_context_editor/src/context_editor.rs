@@ -2052,7 +2052,7 @@ impl ContextEditor {
         let focus_handle = self.editor().focus_handle(cx).clone();
         let model_name = match active_model {
             Some(model) => model.name().0,
-            None => SharedString::from("No model selected"),
+            None => SharedString::from("Auto Tender AI"),
         };
 
         LanguageModelSelectorPopoverMenu::new(

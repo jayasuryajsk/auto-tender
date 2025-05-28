@@ -711,16 +711,16 @@
     // The default model to use when creating new threads.
     "default_model": {
       // The provider to use.
-      "provider": "zed.dev",
+      "provider": "auto_tender",
       // The model to use.
-      "model": "claude-3-7-sonnet-latest"
+      "model": "auto-tender-default"
     },
     // The model to use when applying edits from the agent.
     "editor_model": {
       // The provider to use.
-      "provider": "zed.dev",
+      "provider": "auto_tender",
       // The model to use.
-      "model": "claude-3-7-sonnet-latest"
+      "model": "auto-tender-default"
     },
     // Additional parameters for language model requests. When making a request to a model, parameters will be taken
     // from the last entry in this list that matches the model's provider and name. In each entry, both provider

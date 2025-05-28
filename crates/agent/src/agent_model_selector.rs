@@ -106,7 +106,7 @@ impl Render for AgentModelSelector {
         let model = self.selector.read(cx).active_model(cx);
         let model_name = model
             .map(|model| model.model.name().0)
-            .unwrap_or_else(|| SharedString::from("No model selected"));
+            .unwrap_or_else(|| SharedString::from("Auto Tender AI"));
 
         LanguageModelSelectorPopoverMenu::new(
             self.selector.clone(),

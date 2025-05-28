@@ -11,6 +11,7 @@ mod settings;
 pub mod ui;
 
 use crate::provider::anthropic::AnthropicLanguageModelProvider;
+use crate::provider::auto_tender::AutoTenderLanguageModelProvider;
 use crate::provider::bedrock::BedrockLanguageModelProvider;
 use crate::provider::cloud::CloudLanguageModelProvider;
 use crate::provider::copilot_chat::CopilotChatLanguageModelProvider;
@@ -35,6 +36,12 @@ fn register_language_model_providers(
     client: Arc<Client>,
     cx: &mut Context<LanguageModelRegistry>,
 ) {
+    // Register Auto Tender provider first (highest priority)
+    registry.register_provider(
+        AutoTenderLanguageModelProvider::new(client.http_client(), cx),
+        cx,
+    );
+
     registry.register_provider(
         CloudLanguageModelProvider::new(user_store.clone(), client.clone(), cx),
         cx,

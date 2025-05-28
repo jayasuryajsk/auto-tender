@@ -680,7 +680,6 @@ dependencies = [
  "linkme",
  "log",
  "markdown",
- "markdownify",
  "open",
  "paths",
  "portable-pty",

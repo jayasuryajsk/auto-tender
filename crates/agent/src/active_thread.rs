@@ -942,8 +942,26 @@ impl ActiveThread {
                 cx,
             );
         });
+        
+        // Check if we have a tool result with display_summary
+        let display_content = if let Some(tool_result) = self.thread.read(cx).tool_result(&tool_use_id) {
+            if let Some(output) = &tool_result.output {
+                if let Some(display_summary) = output.get("display_summary").and_then(|v| v.as_str()) {
+                    // Use the display summary instead of full content
+                    display_summary.to_string()
+                } else {
+                    // Fallback to original content
+                    tool_output.to_string()
+                }
+            } else {
+                tool_output.to_string()
+            }
+        } else {
+            tool_output.to_string()
+        };
+        
         rendered.output.update(cx, |this, cx| {
-            this.replace(tool_output, cx);
+            this.replace(display_content, cx);
         });
     }
 

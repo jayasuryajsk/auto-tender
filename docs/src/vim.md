@@ -263,7 +263,7 @@ This table shows commands for managing windows, tabs, and panes. As commands don
 | `:qa[ll][!]`   | Close all buffers                                    |
 | `:[e]x[it][!]` | Close the buffer                                     |
 | `:up[date]`    | Save the current file                                |
-| `:cq`          | Quit completely (close all running instances of Zed) |
+| `:cq`          | Quit completely (close all running instances of Auto Tender) |
 | `:vs[plit]`    | Split the pane vertically                            |
 | `:sp[lit]`     | Split the pane horizontally                          |
 | `:new`         | Create a new file in a horizontal split              |
@@ -279,7 +279,7 @@ This table shows commands for managing windows, tabs, and panes. As commands don
 
 ### Ex commands
 
-These ex commands open Zed's various panels and windows.
+These ex commands open Auto Tender's various panels and windows.
 
 | Command                      | Default Shortcut |
 | ---------------------------- | ---------------- |
@@ -535,118 +535,4 @@ The [vim-exchange](https://github.com/tommcdo/vim-exchange) feature does not hav
 
 ### Restoring common text editing keybindings
 
-If you're using vim mode on Linux or Windows, you may find it overrides keybindings you can't live without: `ctrl+v` to paste, `ctrl+f` to search, etc. You can restore them by copying this data into your keymap:
-
-```json
-{
-  "context": "Editor && !menu",
-  "bindings": {
-    "ctrl-c": "editor::Copy",          // vim default: return to normal mode
-    "ctrl-x": "editor::Cut",           // vim default: decrement
-    "ctrl-v": "editor::Paste",         // vim default: visual block mode
-    "ctrl-y": "editor::Undo",          // vim default: line up
-    "ctrl-f": "buffer_search::Deploy", // vim default: page down
-    "ctrl-o": "workspace::Open",       // vim default: go back
-    "ctrl-a": "editor::SelectAll",     // vim default: increment
-  }
-},
-```
-
-## Changing vim mode settings
-
-You can change the following settings to modify vim mode's behavior:
-
-| Property                     | Description                                                                                                                                                                                   | Default Value |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
-| default_mode                 | The default mode to start in. One of "normal", "insert", "replace", "visual", "visual_line", "visual_block", "helix_normal".                                                                  | "normal"      |
-| use_system_clipboard         | Determines how system clipboard is used:<br><ul><li>"always": use for all operations</li><li>"never": only use when explicitly specified</li><li>"on_yank": use for yank operations</li></ul> | "always"      |
-| use_multiline_find           | If `true`, `f` and `t` motions extend across multiple lines.                                                                                                                                  | false         |
-| use_smartcase_find           | If `true`, `f` and `t` motions are case-insensitive when the target letter is lowercase.                                                                                                      | false         |
-| toggle_relative_line_numbers | If `true`, line numbers are relative in normal mode and absolute in insert mode, giving you the best of both options.                                                                         | false         |
-| custom_digraphs              | An object that allows you to add custom digraphs. Read below for an example.                                                                                                                  | {}            |
-| highlight_on_yank_duration   | The duration of the highlight animation(in ms). Set to `0` to disable                                                                                                                         | 200           |
-
-Here's an example of adding a digraph for the zombie emoji. This allows you to type `ctrl-k f z` to insert a zombie emoji. You can add as many digraphs as you like.
-
-```json
-{
-  "vim": {
-    "custom_digraphs": {
-      "fz": "🧟‍♀️"
-    }
-  }
-}
-```
-
-Here's an example of these settings changed:
-
-```json
-{
-  "vim": {
-    "default_mode": "insert",
-    "use_system_clipboard": "never",
-    "use_multiline_find": true,
-    "use_smartcase_find": true,
-    "toggle_relative_line_numbers": true,
-    "highlight_on_yank_duration": 50,
-    "custom_digraphs": {
-      "fz": "🧟‍♀️"
-    }
-  }
-}
-```
-
-## Useful core Zed settings for vim mode
-
-Here are a few general Zed settings that can help you fine-tune your Vim experience:
-
-| Property                | Description                                                                                                                                                   | Default Value        |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
-| cursor_blink            | If `true`, the cursor blinks.                                                                                                                                 | `true`               |
-| relative_line_numbers   | If `true`, line numbers in the left gutter are relative to the cursor.                                                                                        | `false`              |
-| scrollbar               | Object that controls the scrollbar display. Set to `{ "show": "never" }` to hide the scroll bar.                                                              | `{ "show": "auto" }` |
-| scroll_beyond_last_line | If set to `"one_page"`, allows scrolling up to one page beyond the last line. Set to `"off"` to prevent this behavior.                                        | `"one_page"`         |
-| vertical_scroll_margin  | The number of lines to keep above or below the cursor when scrolling. Set to `0` to allow the cursor to go up to the edges of the screen vertically.          | `3`                  |
-| gutter.line_numbers     | Controls the display of line numbers in the gutter. Set the `"line_numbers"` property to `false` to hide line numbers.                                        | `true`               |
-| command_aliases         | Object that defines aliases for commands in the command palette. You can use it to define shortcut names for commands you use often. Read below for examples. | `{}`                 |
-
-Here's an example of these settings changed:
-
-```json
-{
-  // Disable cursor blink
-  "cursor_blink": false,
-  // Use relative line numbers
-  "relative_line_numbers": true,
-  // Hide the scroll bar
-  "scrollbar": { "show": "never" },
-  // Prevent the buffer from scrolling beyond the last line
-  "scroll_beyond_last_line": "off",
-  // Allow the cursor to reach the edges of the screen
-  "vertical_scroll_margin": 0,
-  "gutter": {
-    // Disable line numbers completely:
-    "line_numbers": false
-  },
-  "command_aliases": {
-    "W": "w",
-    "Wq": "wq",
-    "Q": "q"
-  }
-}
-```
-
-The `command_aliases` property is a single object that maps keys or key sequences to vim mode commands. The example above defines multiple aliases: `W` for `w`, `Wq` for `wq`, and `Q` for `q`.
-
-## Regex differences
-
-Zed uses a different regular expression engine from Vim. This means that you will have to use a different syntax in some cases. Here are the most common differences:
-
-- **Capture groups**: Vim uses `\(` and `\)` to represent capture groups, in Zed these are `(` and `)`. On the flip side, in Vim, `(` and `)` represent literal parentheses, but in Zed these must be escaped to `\(` and `\)`.
-- **Matches**: When replacing, Vim uses the backslash character followed by a number to represent a matched capture group. For example, `\1`. Zed uses the dollar sign instead. So, when in Vim you use `\0` to represent the entire match, in Zed the syntax is `$0` instead. Same for numbered capture groups: `\1` in Vim is `$1` in Zed.
-- **Global option**: By default, in Vim, regex searches only match the first occurrence on a line, and you append `/g` at the end of your query to find all matches. In Zed, regex searches are global by default.
-- **Case sensitivity**: Vim uses `/i` to indicate a case-insensitive search. In Zed you can either write `(?i)` at the start of the pattern or toggle case-sensitivity with the shortcut {#kb search::ToggleCaseSensitive}.
-
-> **Note**: To help with the transition, the command palette will fix parentheses and replace groups for you when you write a Vim-style substitute command, `:%s//`. So, Zed will convert `%s:/\(a\)(b)/\1/` into a search for "(a)\(b\)" and a replacement of "$1".
-
-For the full syntax supported by Zed's regex engine [see the regex crate documentation](https://docs.rs/regex/latest/regex/#syntax).
+If you're using vim mode on Linux or Windows, you may find it overrides keybindings you can't live without: `ctrl+v` to paste, `ctrl+f`

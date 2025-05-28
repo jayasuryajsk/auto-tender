@@ -69,7 +69,7 @@ pub async fn post_crash(
     let bundle_id = &report.header.bundle_id;
     let app_version = &report.app_version();
 
-    if bundle_id == "com.tenderai.TenderAI-Dev" {
+    if bundle_id == "com.autotender.AutoTender-Dev" {
         log::error!("Crash uploads from {} are ignored.", bundle_id);
         return Ok(());
     }

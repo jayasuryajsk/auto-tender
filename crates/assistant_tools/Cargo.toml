@@ -62,7 +62,6 @@ which.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
 zed_llm_client.workspace = true
-markdownify = "0.1.5"
 smol = "1.2"
 
 [dev-dependencies]

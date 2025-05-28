@@ -1314,6 +1314,11 @@ impl AgentPanel {
 
         self.focus_handle(cx).focus(window);
     }
+
+    fn configuration_error(&self, cx: &App) -> Option<ConfigurationError> {
+        // Auto Tender is always configured - no configuration errors
+        None
+    }
 }
 
 impl Focusable for AgentPanel {
@@ -1963,7 +1968,7 @@ impl AgentPanel {
                                         linear_color_stop(cx.theme().colors().panel_background, 0.45),
                                     ))
                             )
-                            .child(Headline::new("Build better with Zed Pro").size(HeadlineSize::Small))
+                            .child(Headline::new("Welcome to Auto Tender").size(HeadlineSize::Small))
                             .child(Label::new("Try Zed Pro for free for 14 days - no credit card required.").size(LabelSize::Small))
                             .child(Label::new("Use your own API keys or enable usage-based billing once you hit the cap.").color(Color::Muted))
                             .child(
@@ -2031,24 +2036,6 @@ impl AgentPanel {
         self.thread.clone().into_any_element()
     }
 
-    fn configuration_error(&self, cx: &App) -> Option<ConfigurationError> {
-        let Some(model) = LanguageModelRegistry::read_global(cx).default_model() else {
-            return Some(ConfigurationError::NoProvider);
-        };
-
-        if !model.provider.is_authenticated(cx) {
-            return Some(ConfigurationError::ProviderNotAuthenticated);
-        }
-
-        if model.provider.must_accept_terms(cx) {
-            return Some(ConfigurationError::ProviderPendingTermsAcceptance(
-                model.provider,
-            ));
-        }
-
-        None
-    }
-
     fn render_thread_empty_state(
         &self,
         window: &mut Window,
@@ -2058,14 +2045,11 @@ impl AgentPanel {
             .history_store
             .update(cx, |this, cx| this.recent_entries(6, cx));
 
-        let configuration_error = self.configuration_error(cx);
-        let no_error = configuration_error.is_none();
         let focus_handle = self.focus_handle(cx);
 
         v_flex()
             .size_full()
             .when(recent_history.is_empty(), |this| {
-                let configuration_error_ref = &configuration_error;
                 this.child(
                     v_flex()
                         .size_full()
@@ -2076,246 +2060,51 @@ impl AgentPanel {
                         .gap_1()
                         .child(
                             h_flex().child(
-                                Headline::new("Welcome to the Agent Panel")
+                                Headline::new("Welcome to Auto Tender")
                             ),
                         )
-                        .when(no_error, |parent| {
-                            parent
-                                .child(
-                                    h_flex().child(
-                                        Label::new("Ask and build anything.")
-                                            .color(Color::Muted)
-                                            .mb_2p5(),
-                                    ),
-                                )
-                                .child(
-                                    Button::new("new-thread", "Start New Thread")
-                                        .icon(IconName::Plus)
-                                        .icon_position(IconPosition::Start)
-                                        .icon_size(IconSize::Small)
-                                        .icon_color(Color::Muted)
-                                        .full_width()
-                                        .key_binding(KeyBinding::for_action_in(
-                                            &NewThread::default(),
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        ))
-                                        .on_click(|_event, window, cx| {
-                                            window.dispatch_action(NewThread::default().boxed_clone(), cx)
-                                        }),
-                                )
-                                .child(
-                                    Button::new("context", "Add Context")
-                                        .icon(IconName::FileCode)
-                                        .icon_position(IconPosition::Start)
-                                        .icon_size(IconSize::Small)
-                                        .icon_color(Color::Muted)
-                                        .full_width()
-                                        .key_binding(KeyBinding::for_action_in(
-                                            &ToggleContextPicker,
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        ))
-                                        .on_click(|_event, window, cx| {
-                                            window.dispatch_action(ToggleContextPicker.boxed_clone(), cx)
-                                        }),
-                                )
-                                .child(
-                                    Button::new("mode", "Switch Model")
-                                        .icon(IconName::DatabaseZap)
-                                        .icon_position(IconPosition::Start)
-                                        .icon_size(IconSize::Small)
-                                        .icon_color(Color::Muted)
-                                        .full_width()
-                                        .key_binding(KeyBinding::for_action_in(
-                                            &ToggleModelSelector,
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        ))
-                                        .on_click(|_event, window, cx| {
-                                            window.dispatch_action(ToggleModelSelector.boxed_clone(), cx)
-                                        }),
-                                )
-                                .child(
-                                    Button::new("settings", "View Settings")
-                                        .icon(IconName::Settings)
-                                        .icon_position(IconPosition::Start)
-                                        .icon_size(IconSize::Small)
-                                        .icon_color(Color::Muted)
-                                        .full_width()
-                                        .key_binding(KeyBinding::for_action_in(
-                                            &OpenConfiguration,
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        ))
-                                        .on_click(|_event, window, cx| {
-                                            window.dispatch_action(OpenConfiguration.boxed_clone(), cx)
-                                        }),
-                                )
-                        })
-                        .map(|parent| {
-                            match configuration_error_ref {
-                                Some(ConfigurationError::ProviderNotAuthenticated)
-                                | Some(ConfigurationError::NoProvider) => {
-                                    parent
-                                        .child(
-                                            h_flex().child(
-                                                Label::new("To start using the agent, configure at least one LLM provider.")
-                                                    .color(Color::Muted)
-                                                    .mb_2p5()
-                                            )
-                                        )
-                                        .child(
-                                            Button::new("settings", "Configure a Provider")
-                                                .icon(IconName::Settings)
-                                                .icon_position(IconPosition::Start)
-                                                .icon_size(IconSize::Small)
-                                                .icon_color(Color::Muted)
-                                                .full_width()
-                                                .key_binding(KeyBinding::for_action_in(
-                                                    &OpenConfiguration,
-                                                    &focus_handle,
-                                                    window,
-                                                    cx,
-                                                ))
-                                                .on_click(|_event, window, cx| {
-                                                    window.dispatch_action(OpenConfiguration.boxed_clone(), cx)
-                                                }),
-                                        )
-                                }
-                                Some(ConfigurationError::ProviderPendingTermsAcceptance(provider)) => {
-                                    parent.children(
-                                        provider.render_accept_terms(
-                                            LanguageModelProviderTosView::ThreadFreshStart,
-                                            cx,
-                                        ),
-                                    )
-                                }
-                                None => parent,
-                            }
-                        })
-                )
-            })
-            .when(!recent_history.is_empty(), |parent| {
-                let focus_handle = focus_handle.clone();
-                let configuration_error_ref = &configuration_error;
-
-                parent
-                    .overflow_hidden()
-                    .p_1p5()
-                    .justify_end()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .pl_1p5()
-                            .pb_1()
-                            .w_full()
-                            .justify_between()
-                            .border_b_1()
-                            .border_color(cx.theme().colors().border_variant)
-                            .child(
-                                Label::new("Recent")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .child(
-                                Button::new("view-history", "View All")
-                                    .style(ButtonStyle::Subtle)
-                                    .label_size(LabelSize::Small)
-                                    .key_binding(
-                                        KeyBinding::for_action_in(
-                                            &OpenHistory,
-                                            &self.focus_handle(cx),
-                                            window,
-                                            cx,
-                                        ).map(|kb| kb.size(rems_from_px(12.))),
-                                    )
-                                    .on_click(move |_event, window, cx| {
-                                        window.dispatch_action(OpenHistory.boxed_clone(), cx);
-                                    }),
+                        .child(
+                            h_flex().child(
+                                Label::new("Your AI-powered tender writing specialist. Upload tender documents, analyze requirements, and craft winning proposals.")
+                                    .color(Color::Muted)
+                                    .mb_2p5(),
                             ),
-                    )
-                    .child(
-                        v_flex()
-                            .gap_1()
-                            .children(
-                                recent_history.into_iter().enumerate().map(|(index, entry)| {
-                                    // TODO: Add keyboard navigation.
-                                    let is_hovered = self.hovered_recent_history_item == Some(index);
-                                    HistoryEntryElement::new(entry.clone(), cx.entity().downgrade())
-                                        .hovered(is_hovered)
-                                        .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
-                                            if *is_hovered {
-                                                this.hovered_recent_history_item = Some(index);
-                                            } else if this.hovered_recent_history_item == Some(index) {
-                                                this.hovered_recent_history_item = None;
-                                            }
-                                            cx.notify();
-                                        }))
-                                        .into_any_element()
+                        )
+                        .child(
+                            Button::new("new-thread", "Start New Tender")
+                                .icon(IconName::Plus)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .full_width()
+                                .key_binding(KeyBinding::for_action_in(
+                                    &NewThread::default(),
+                                    &focus_handle,
+                                    window,
+                                    cx,
+                                ))
+                                .on_click(|_event, window, cx| {
+                                    window.dispatch_action(NewThread::default().boxed_clone(), cx)
                                 }),
-                            )
-                    )
-                    .map(|parent| {
-                        match configuration_error_ref {
-                            Some(ConfigurationError::ProviderNotAuthenticated)
-                            | Some(ConfigurationError::NoProvider) => {
-                                parent
-                                    .child(
-                                        Banner::new()
-                                            .severity(ui::Severity::Warning)
-                                            .child(
-                                                Label::new(
-                                                    "Configure at least one LLM provider to start using the panel.",
-                                                )
-                                                .size(LabelSize::Small),
-                                            )
-                                            .action_slot(
-                                                Button::new("settings", "Configure Provider")
-                                                    .style(ButtonStyle::Tinted(ui::TintColor::Warning))
-                                                    .label_size(LabelSize::Small)
-                                                    .key_binding(
-                                                        KeyBinding::for_action_in(
-                                                            &OpenConfiguration,
-                                                            &focus_handle,
-                                                            window,
-                                                            cx,
-                                                        )
-                                                        .map(|kb| kb.size(rems_from_px(12.))),
-                                                    )
-                                                    .on_click(|_event, window, cx| {
-                                                        window.dispatch_action(
-                                                            OpenConfiguration.boxed_clone(),
-                                                            cx,
-                                                        )
-                                                    }),
-                                            ),
-                                    )
-                            }
-                            Some(ConfigurationError::ProviderPendingTermsAcceptance(provider)) => {
-                                parent
-                                    .child(
-                                        Banner::new()
-                                            .severity(ui::Severity::Warning)
-                                            .child(
-                                                h_flex()
-                                                    .w_full()
-                                                    .children(
-                                                        provider.render_accept_terms(
-                                                            LanguageModelProviderTosView::ThreadtEmptyState,
-                                                            cx,
-                                                        ),
-                                                    ),
-                                            ),
-                                    )
-                            }
-                            None => parent,
-                        }
-                    })
+                        )
+                        .child(
+                            Button::new("context", "Add Tender Documents")
+                                .icon(IconName::FileCode)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .full_width()
+                                .key_binding(KeyBinding::for_action_in(
+                                    &ToggleContextPicker,
+                                    &focus_handle,
+                                    window,
+                                    cx,
+                                ))
+                                .on_click(|_event, window, cx| {
+                                    window.dispatch_action(ToggleContextPicker.boxed_clone(), cx)
+                                }),
+                        )
+                )
             })
     }
 

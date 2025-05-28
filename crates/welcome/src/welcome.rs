@@ -28,8 +28,8 @@ mod welcome_ui;
 actions!(welcome, [ResetHints]);
 
 pub const FIRST_OPEN: &str = "first_open";
-pub const DOCS_URL: &str = "https://tenderai.com/docs/";
-const BOOK_ONBOARDING: &str = "https://tenderai.com/onboarding";
+pub const DOCS_URL: &str = "https://autotender.dev/docs/";
+const BOOK_ONBOARDING: &str = "https://autotender.dev/onboarding";
 
 pub fn init(cx: &mut App) {
     BaseKeymap::register(cx);
@@ -61,9 +61,9 @@ pub fn show_welcome_view(app_state: Arc<AppState>, cx: &mut App) -> Task<anyhow:
 
             cx.notify();
 
-            // db::write_and_log(cx, || {
-            //     KEY_VALUE_STORE.write_kvp(FIRST_OPEN.to_string(), "false".to_string())
-            // });
+            db::write_and_log(cx, || {
+                KEY_VALUE_STORE.write_kvp(FIRST_OPEN.to_string(), "false".to_string())
+            });
         },
     )
 }
@@ -112,7 +112,7 @@ impl Render for WelcomePage {
                                 h_flex()
                                     .w_full()
                                     .justify_center()
-                                    .child(Headline::new("Welcome to TenderAI")),
+                                    .child(Headline::new("Welcome to Auto Tender")),
                             )
                             .child(
                                 h_flex().w_full().justify_center().child(
@@ -223,7 +223,7 @@ impl Render for WelcomePage {
                                             .icon_position(IconPosition::Start)
                                             .on_click(cx.listener(|_, _, _, cx| {
                                                 telemetry::event!("Tender Templates Viewed");
-                                                cx.open_url("https://tenderai.com/templates");
+                                                cx.open_url("https://autotender.dev/templates");
                                             })),
                                     )
                                     .child(
@@ -234,7 +234,7 @@ impl Render for WelcomePage {
                                             .icon_position(IconPosition::Start)
                                             .on_click(cx.listener(|_, _, _, cx| {
                                                 telemetry::event!("Tender Documentation Viewed");
-                                                cx.open_url("https://tenderai.com/guide");
+                                                cx.open_url("https://autotender.dev/guide");
                                             })),
                                     )
                                     .child(
@@ -245,7 +245,7 @@ impl Render for WelcomePage {
                                             .icon_position(IconPosition::Start)
                                             .on_click(cx.listener(|_, _, _, cx| {
                                                 telemetry::event!("Tender Demo Scheduled");
-                                                cx.open_url("https://tenderai.com/schedule");
+                                                cx.open_url("https://autotender.dev/schedule");
                                             })),
                                     )
                                     .child(
@@ -256,7 +256,7 @@ impl Render for WelcomePage {
                                             .icon_position(IconPosition::Start)
                                             .on_click(cx.listener(|_, _, _, cx| {
                                                 telemetry::event!("Tender Support Accessed");
-                                                cx.open_url("https://tenderai.com/support");
+                                                cx.open_url("https://autotender.dev/support");
                                             })),
                                     ),
                             ),

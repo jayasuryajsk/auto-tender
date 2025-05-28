@@ -7,9 +7,9 @@ pub fn app_menus() -> Vec<Menu> {
 
     vec![
         Menu {
-            name: "Zed".into(),
+            name: "Auto Tender".into(),
             items: vec![
-                MenuItem::action("About Zed…", zed_actions::About),
+                MenuItem::action("About Auto Tender…", zed_actions::About),
                 MenuItem::action("Check for Updates", auto_update::Check),
                 MenuItem::separator(),
                 MenuItem::submenu(Menu {
@@ -39,12 +39,13 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action("Install CLI", install_cli::Install),
                 MenuItem::separator(),
                 #[cfg(target_os = "macos")]
-                MenuItem::action("Hide Zed", super::Hide),
+                MenuItem::action("Hide Auto Tender", super::Hide),
                 #[cfg(target_os = "macos")]
                 MenuItem::action("Hide Others", super::HideOthers),
                 #[cfg(target_os = "macos")]
                 MenuItem::action("Show All", super::ShowAll),
-                MenuItem::action("Quit", Quit),
+                MenuItem::separator(),
+                MenuItem::action("Quit Auto Tender", Quit),
             ],
         },
         Menu {

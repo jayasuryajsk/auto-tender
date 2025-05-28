@@ -1,8 +1,8 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
 use assistant_tool::outline;
-use assistant_tool::{ActionLog, Tool, ToolResult};
-use gpui::{AnyWindowHandle, App, Entity, Task};
+use assistant_tool::{ActionLog, Tool, ToolResult, ToolResultOutput, ToolUseStatus};
+use gpui::{AnyWindowHandle, App, Entity, Task, WeakEntity};
 use gpui::AppContext;
 
 use indoc::formatdoc;
@@ -13,11 +13,10 @@ use project::{AgentLocation, Project};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use ui::IconName;
+use ui::{IconName, prelude::*};
 use util::markdown::MarkdownInlineCode;
-use markdownify::convert as markdownify_convert;
-use smol::unblock;
 use std::path::PathBuf;
+use workspace::Workspace;
 
 /// If the model requests to read a file whose size exceeds this, then
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -50,6 +49,60 @@ pub struct ReadFileToolInput {
 const READ_FILE_MARKDOWNIFY_EXTENSIONS: &[&str] = &[
     "pdf", "docx", "odt", "pptx", "xlsx", "xls", "xlsm", "xlsb", "xla", "xlam", "ods", "csv", "zip"
 ];
+
+// Convert document using backend MarkItDown service
+async fn convert_document_via_backend(file_path: &PathBuf) -> Result<ToolResultOutput> {
+    use std::process::Command;
+    
+    // Try to use markitdown command directly first
+    let output = Command::new("markitdown")
+        .arg(file_path.to_str().unwrap())
+        .output()
+        .map_err(|e| anyhow!("Failed to run markitdown: {}. Make sure Microsoft MarkItDown is installed with 'pip install markitdown[all]'", e))?;
+    
+    if output.status.success() {
+        let full_content = String::from_utf8(output.stdout)?;
+        let file_name = file_path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("document");
+        
+        // Count lines and characters
+        let line_count = full_content.lines().count();
+        let char_count = full_content.chars().count();
+        let word_count = full_content.split_whitespace().count();
+        
+        // Create a summary for the UI display
+        let summary = if char_count > 2000 {
+            format!(
+                "📄 **Document converted successfully**\n\n**{}** ({} lines, {} words, {} characters)\n\n*Document content has been processed and is available to the AI for analysis. The full content is not displayed here to keep the conversation clean.*",
+                file_name, line_count, word_count, char_count
+            )
+        } else {
+            // For smaller documents, show a preview
+            let preview = if full_content.len() > 500 {
+                format!("{}...\n\n*[Content truncated for display - full content available to AI]*", 
+                       &full_content[..500])
+            } else {
+                full_content.clone()
+            };
+            
+            format!(
+                "📄 **Document converted successfully**\n\n**{}** ({} lines, {} words)\n\n{}", 
+                file_name, line_count, word_count, preview
+            )
+        };
+        
+        Ok(ToolResultOutput {
+            content: full_content, // Full content for AI
+            output: Some(serde_json::json!({
+                "display_summary": summary
+            }))
+        })
+    } else {
+        let error = String::from_utf8_lossy(&output.stderr);
+        Err(anyhow!("MarkItDown conversion failed: {}", error))
+    }
+}
 
 pub struct ReadFileTool;
 
@@ -95,7 +148,7 @@ impl Tool for ReadFileTool {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         _model: Arc<dyn LanguageModel>,
-        _window: Option<AnyWindowHandle>,
+        window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<ReadFileToolInput>(input) {
@@ -108,22 +161,21 @@ impl Tool for ReadFileTool {
         };
 
         let file_path = input.path.clone();
-        cx.spawn(async move |cx| {
+        
+        let output = cx.spawn(async move |cx| {
             // Resolve the absolute on-disk path for this project file via AsyncApp
             let absolute_disk_path: PathBuf = cx
                 .read_entity(&project, |proj, app| proj.absolute_path(&project_path, app))?
                 .ok_or_else(|| anyhow!("Couldn't resolve on-disk path for '{}',", file_path))?;
-            // Check if the file should be converted via markdownify
+            // Check if the file should be converted via MarkItDown
             if let Some(ext) = absolute_disk_path.extension().and_then(|s| s.to_str()) {
                 if READ_FILE_MARKDOWNIFY_EXTENSIONS.contains(&ext) {
-                    // Convert the document to Markdown in a background thread
+                    // Convert the document using Microsoft MarkItDown
                     let path_for_convert = absolute_disk_path.clone();
-                    let markdown_text = unblock(move || {
-                        markdownify_convert(&path_for_convert, None)
-                            .map_err(|e| anyhow!("Markdownify conversion failed for {:?}: {}", path_for_convert, e))
-                    })
-                    .await?;
-                    return Ok(markdown_text.into());
+                    let result = convert_document_via_backend(&path_for_convert).await
+                        .map_err(|e| anyhow!("Document conversion failed for {:?}: {}", path_for_convert, e))?;
+                    
+                    return Ok(result);
                 }
             }
 
@@ -200,13 +252,39 @@ impl Tool for ReadFileTool {
 
                 if file_size <= outline::AUTO_OUTLINE_SIZE {
                     // File is small enough, so return its contents.
-                    let result = buffer.read_with(cx, |buffer, _cx| buffer.text())?;
+                    let content = buffer.read_with(cx, |buffer, _cx| buffer.text())?;
 
                     action_log.update(cx, |log, cx| {
                         log.buffer_read(buffer, cx);
                     })?;
 
-                    Ok(result.into())
+                    // For files larger than 1000 chars, provide a summary for UI display
+                    if content.len() > 1000 {
+                        let line_count = content.lines().count();
+                        let word_count = content.split_whitespace().count();
+                        let char_count = content.chars().count();
+                        
+                        let preview = if content.len() > 300 {
+                            format!("{}...\n\n*[Content truncated for display - full content available to AI]*", 
+                                   &content[..300])
+                        } else {
+                            content.clone()
+                        };
+                        
+                        let summary = format!(
+                            "📄 **File loaded successfully**\n\n**{}** ({} lines, {} words, {} characters)\n\n{}", 
+                            file_path, line_count, word_count, char_count, preview
+                        );
+                        
+                        Ok(ToolResultOutput {
+                            content, // Full content for AI
+                            output: Some(serde_json::json!({
+                                "display_summary": summary
+                            }))
+                        })
+                    } else {
+                        Ok(content.into())
+                    }
                 } else {
                     // File is too big, so return the outline
                     // and a suggestion to read again with line numbers.
@@ -226,8 +304,12 @@ impl Tool for ReadFileTool {
                     .into())
                 }
             }
-        })
-        .into()
+        });
+
+        ToolResult {
+            output,
+            card: None, // No custom card
+        }
     }
 }
 
