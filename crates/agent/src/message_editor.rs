@@ -8,6 +8,14 @@ use crate::ui::{
     AnimatedLabel, MaxModeTooltip,
     preview::{AgentPreview, UsageCallout},
 };
+
+#[derive(Clone, Debug)]
+pub enum IndexingStatus {
+    NotStarted,
+    InProgress,
+    Complete,
+    Error(String),
+}
 use assistant_settings::{AssistantSettings, CompletionMode};
 use buffer_diff::BufferDiff;
 use client::UserStore;
@@ -73,6 +81,7 @@ pub struct MessageEditor {
     editor_is_expanded: bool,
     last_estimated_token_count: Option<usize>,
     update_token_count_task: Option<Task<()>>,
+    indexing_status: IndexingStatus,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -228,6 +237,7 @@ impl MessageEditor {
             profile_selector,
             last_estimated_token_count: None,
             update_token_count_task: None,
+            indexing_status: IndexingStatus::NotStarted,
             _subscriptions: subscriptions,
         }
     }
@@ -336,24 +346,35 @@ impl MessageEditor {
         let thread = self.thread.clone();
         let git_store = self.project.read(cx).git_store().clone();
         let checkpoint = git_store.update(cx, |git_store, cx| git_store.checkpoint(cx));
+        
+        // Check indexing status before proceeding
+        self.check_indexing_status(cx);
+        
+        // Insert user message immediately to show it right away
+        thread
+            .update(cx, |thread, cx| {
+                thread.insert_user_message(
+                    user_message.clone(),
+                    Default::default(), // Empty context for immediate display
+                    None, // No checkpoint yet
+                    user_message_creases.clone(),
+                    cx,
+                );
+            });
+
+        // Wait for indexing to complete if it's in progress
+        let indexing_wait_task = self.wait_for_indexing_completion(cx);
+
+        // Load context and send to model in the background
         let context_task = self.reload_context(cx);
         let window_handle = window.window_handle();
 
         cx.spawn(async move |_this, cx| {
+            // Wait for indexing to complete first
+            indexing_wait_task.await;
+            
             let (checkpoint, loaded_context) = future::join(checkpoint, context_task).await;
             let loaded_context = loaded_context.unwrap_or_default();
-
-            thread
-                .update(cx, |thread, cx| {
-                    thread.insert_user_message(
-                        user_message,
-                        loaded_context,
-                        checkpoint.ok(),
-                        user_message_creases,
-                        cx,
-                    );
-                })
-                .log_err();
 
             thread
                 .update(cx, |thread, cx| {
@@ -1164,6 +1185,66 @@ impl MessageEditor {
         self.update_token_count_task.is_some()
     }
 
+    pub fn indexing_status(&self) -> &IndexingStatus {
+        &self.indexing_status
+    }
+
+    fn check_indexing_status(&mut self, cx: &mut Context<Self>) {
+        // For now, just check if semantic DB exists and assume it's working
+        let new_status = if cx.has_global::<semantic_index::SemanticDb>() {
+            // TODO: Actually check the indexing status
+            // For now, assume it's complete if the DB exists
+            IndexingStatus::Complete
+        } else {
+            IndexingStatus::NotStarted
+        };
+
+        if !matches!((&self.indexing_status, &new_status), 
+                    (IndexingStatus::InProgress, IndexingStatus::InProgress) |
+                    (IndexingStatus::Complete, IndexingStatus::Complete) |
+                    (IndexingStatus::NotStarted, IndexingStatus::NotStarted)) {
+            self.indexing_status = new_status;
+            cx.notify();
+        }
+    }
+
+    fn wait_for_indexing_completion(&self, _cx: &mut Context<Self>) -> Task<()> {
+        // For now, don't actually wait - just proceed immediately
+        // TODO: Implement actual waiting logic when indexing status is properly tracked
+        Task::ready(())
+    }
+
+    fn render_indexing_indicator(&mut self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        // Update indexing status
+        self.check_indexing_status(cx);
+    
+        match &self.indexing_status {
+            IndexingStatus::InProgress => {
+                Some(
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .px_3()
+                        .py_2()
+                        .bg(cx.theme().colors().element_background)
+                        .border_y_1()
+                        .border_color(cx.theme().colors().border)
+                        .child(
+                            Icon::new(IconName::ArrowCircle)
+                                .size(IconSize::Small)
+                                .color(Color::Warning)
+                        )
+                        .child(
+                            Label::new("Indexing documents... AI will respond once indexing is complete")
+                                .size(LabelSize::Small)
+                                .color(Color::Warning)
+                        )
+                )
+            }
+            _ => None,
+        }
+    }
+
     fn reload_context(&mut self, cx: &mut Context<Self>) -> Task<Option<ContextLoadResult>> {
         let load_task = cx.spawn(async move |this, cx| {
             let Ok(load_task) = this.update(cx, |this, cx| {
@@ -1358,6 +1439,7 @@ impl Render for MessageEditor {
                 parent.child(self.render_changed_buffers(&changed_buffers, window, cx))
             })
             .child(self.render_editor(window, cx))
+            .children(self.render_indexing_indicator(cx))
             .children({
                 let usage_callout = self.render_usage_callout(line_height, cx);
 

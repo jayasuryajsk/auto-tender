@@ -509,6 +509,101 @@ fn main() {
             app_state.languages.clone(),
             cx,
         );
+        
+        // Initialize semantic indexing for automatic document indexing
+        cx.spawn({
+            let client = app_state.client.clone();
+            async move |cx| {
+                use semantic_index::{SemanticDb, OpenAiEmbeddingProvider, OpenAiEmbeddingModel, OllamaEmbeddingProvider, OllamaEmbeddingModel};
+                use assistant_settings::AssistantSettings;
+                use std::sync::Arc;
+                
+                log::info!("🔍 Starting semantic indexing initialization...");
+                
+                // Get the configured language model provider from settings
+                let provider_name = cx.update(|cx| {
+                    let settings = AssistantSettings::get_global(cx);
+                    log::info!("📊 Current language model settings: provider='{}', model='{}'", 
+                              settings.default_model.provider.0, settings.default_model.model);
+                    settings.default_model.provider.0.clone()
+                }).unwrap_or_else(|e| {
+                    log::error!("❌ Failed to get assistant settings: {}", e);
+                    "openai".to_string()
+                });
+                
+                let db_path = paths::data_dir().join("semantic-index");
+                log::info!("💾 Semantic index database path: {:?}", db_path);
+                
+                // Check environment variables
+                let openai_key_available = std::env::var("OPENAI_API_KEY").is_ok();
+                log::info!("🔑 Environment check: OPENAI_API_KEY={}", if openai_key_available { "available" } else { "missing" });
+                
+                // Create embedding provider based on configured language model provider
+                let embedding_provider: Option<Arc<dyn semantic_index::EmbeddingProvider>> = match provider_name.as_str() {
+                    "openai" => {
+                        log::info!("🤖 Configuring OpenAI embedding provider...");
+                        if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
+                            log::info!("✅ OpenAI API key found, creating embedding provider");
+                            Some(Arc::new(OpenAiEmbeddingProvider::new(
+                                client.http_client(),
+                                OpenAiEmbeddingModel::TextEmbedding3Small,
+                                "https://api.openai.com/v1".to_string(),
+                                api_key,
+                            )))
+                        } else {
+                            log::warn!("⚠️  OpenAI selected but OPENAI_API_KEY not found. Set environment variable to enable indexing.");
+                            None
+                        }
+                    },
+                    "ollama" => {
+                        log::info!("🤖 Configuring Ollama embedding provider...");
+                        Some(Arc::new(OllamaEmbeddingProvider::new(
+                            client.http_client(),
+                            OllamaEmbeddingModel::NomicEmbedText,
+                        )))
+                    },
+                    _ => {
+                        log::info!("🔄 Language model provider '{}' doesn't support embeddings yet. Using OpenAI fallback.", provider_name);
+                        if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
+                            log::info!("✅ OpenAI fallback API key found, creating embedding provider");
+                            Some(Arc::new(OpenAiEmbeddingProvider::new(
+                                client.http_client(),
+                                OpenAiEmbeddingModel::TextEmbedding3Small,
+                                "https://api.openai.com/v1".to_string(),
+                                api_key,
+                            )))
+                        } else {
+                            log::warn!("❌ Fallback to OpenAI failed - OPENAI_API_KEY not found. Semantic indexing disabled.");
+                            None
+                        }
+                    }
+                };
+                
+                if let Some(provider) = embedding_provider {
+                    log::info!("🚀 Creating SemanticDb with embedding provider...");
+                    match SemanticDb::new(db_path, provider, cx).await {
+                        Ok(semantic_db) => {
+                            log::info!("🎉 SemanticDb created successfully!");
+                            cx.update(|cx| {
+                                cx.set_global(semantic_db);
+                                log::info!("✅ Semantic indexing initialized with '{}' provider - documents will be automatically indexed", provider_name);
+                                log::info!("📚 Auto Tender will now automatically index all documents in opened projects");
+                            }).log_err();
+                        }
+                        Err(e) => {
+                            log::error!("💥 Failed to initialize semantic indexing: {}", e);
+                        }
+                    }
+                } else {
+                    log::warn!("🚫 No compatible embedding provider available. Configure OpenAI API key or use Ollama to enable automatic document indexing.");
+                    log::info!("💡 To enable indexing:");
+                    log::info!("   1. Set OPENAI_API_KEY environment variable, or");
+                    log::info!("   2. Install and run Ollama locally, or");
+                    log::info!("   3. Configure another supported embedding provider");
+                }
+            }
+        }).detach();
+        
         assistant_tools::init(app_state.client.http_client(), cx);
         repl::init(app_state.fs.clone(), cx);
         extension_host::init(

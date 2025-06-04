@@ -17,6 +17,7 @@ mod inline_prompt_editor;
 mod message_editor;
 mod profile_selector;
 mod slash_command_settings;
+
 mod terminal_codegen;
 mod terminal_inline_assistant;
 mod thread;

@@ -2063,47 +2063,47 @@ impl AgentPanel {
                                 Headline::new("Welcome to Auto Tender")
                             ),
                         )
-                        .child(
-                            h_flex().child(
+                                .child(
+                                    h_flex().child(
                                 Label::new("Your AI-powered tender writing specialist. Upload tender documents, analyze requirements, and craft winning proposals.")
-                                    .color(Color::Muted)
-                                    .mb_2p5(),
-                            ),
-                        )
-                        .child(
+                                            .color(Color::Muted)
+                                            .mb_2p5(),
+                                    ),
+                                )
+                                .child(
                             Button::new("new-thread", "Start New Tender")
-                                .icon(IconName::Plus)
-                                .icon_position(IconPosition::Start)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Muted)
-                                .full_width()
-                                .key_binding(KeyBinding::for_action_in(
-                                    &NewThread::default(),
-                                    &focus_handle,
-                                    window,
-                                    cx,
-                                ))
-                                .on_click(|_event, window, cx| {
-                                    window.dispatch_action(NewThread::default().boxed_clone(), cx)
-                                }),
-                        )
-                        .child(
+                                        .icon(IconName::Plus)
+                                        .icon_position(IconPosition::Start)
+                                        .icon_size(IconSize::Small)
+                                        .icon_color(Color::Muted)
+                                        .full_width()
+                                        .key_binding(KeyBinding::for_action_in(
+                                            &NewThread::default(),
+                                            &focus_handle,
+                                            window,
+                                            cx,
+                                        ))
+                                        .on_click(|_event, window, cx| {
+                                            window.dispatch_action(NewThread::default().boxed_clone(), cx)
+                                        }),
+                                )
+                                .child(
                             Button::new("context", "Add Tender Documents")
-                                .icon(IconName::FileCode)
-                                .icon_position(IconPosition::Start)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Muted)
-                                .full_width()
-                                .key_binding(KeyBinding::for_action_in(
-                                    &ToggleContextPicker,
-                                    &focus_handle,
-                                    window,
-                                    cx,
-                                ))
-                                .on_click(|_event, window, cx| {
-                                    window.dispatch_action(ToggleContextPicker.boxed_clone(), cx)
-                                }),
-                        )
+                                        .icon(IconName::FileCode)
+                                        .icon_position(IconPosition::Start)
+                                        .icon_size(IconSize::Small)
+                                        .icon_color(Color::Muted)
+                                        .full_width()
+                                        .key_binding(KeyBinding::for_action_in(
+                                            &ToggleContextPicker,
+                                            &focus_handle,
+                                            window,
+                                            cx,
+                                        ))
+                                        .on_click(|_event, window, cx| {
+                                            window.dispatch_action(ToggleContextPicker.boxed_clone(), cx)
+                                        }),
+                                )
                 )
             })
     }

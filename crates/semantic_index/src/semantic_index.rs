@@ -58,13 +58,21 @@ impl SemanticDb {
             cx.observe_new(
                 |workspace: &mut Workspace, _window, cx: &mut Context<Workspace>| {
                     let project = workspace.project().clone();
+                    let project_path = project.read(cx).worktrees(cx)
+                        .next()
+                        .map(|wt| wt.read(cx).abs_path().to_string_lossy().to_string())
+                        .unwrap_or_else(|| "unknown".to_string());
+
+                    log::info!("📁 New workspace opened: {}", project_path);
 
                     if cx.has_global::<SemanticDb>() {
+                        log::info!("🔍 SemanticDb found, creating project index for: {}", project_path);
                         cx.update_global::<SemanticDb, _>(|this, cx| {
                             this.create_project_index(project, cx);
                         })
                     } else {
-                        log::info!("No SemanticDb, skipping project index")
+                        log::warn!("❌ No SemanticDb global found, skipping project index for: {}", project_path);
+                        log::info!("💡 This means semantic indexing was not initialized properly");
                     }
                 },
             )
@@ -229,6 +237,13 @@ impl SemanticDb {
         project: Entity<Project>,
         cx: &mut App,
     ) -> Entity<ProjectIndex> {
+        let project_path = project.read(cx).worktrees(cx)
+            .next()
+            .map(|wt| wt.read(cx).abs_path().to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        
+        log::info!("🚀 Creating project index for: {}", project_path);
+        
         let project_index = cx.new(|cx| {
             ProjectIndex::new(
                 project.clone(),
@@ -238,6 +253,7 @@ impl SemanticDb {
             )
         });
 
+        log::info!("✅ Project index created successfully for: {}", project_path);
         let project_weak = project.downgrade();
         self.project_indices
             .insert(project_weak.clone(), project_index.clone());

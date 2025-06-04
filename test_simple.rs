@@ -1,0 +1,1 @@
+use std::path::PathBuf; fn main() { let rt = tokio::runtime::Runtime::new().unwrap(); rt.block_on(async { tender_docs::commands::create_manager_for_project(PathBuf::from("./test_project")).await.unwrap(); println!("✅ Success!"); }); }

@@ -435,12 +435,15 @@ pub fn into_open_ai(
 
 pub struct OpenAiEventMapper {
     tool_calls_by_index: HashMap<usize, RawToolCall>,
+    tokenizer: Option<tiktoken_rs::CoreBPE>,
 }
 
 impl OpenAiEventMapper {
     pub fn new() -> Self {
+        let tokenizer = tiktoken_rs::get_bpe_from_model("gpt-4o").ok();
         Self {
             tool_calls_by_index: HashMap::default(),
+            tokenizer,
         }
     }
 
@@ -469,7 +472,20 @@ impl OpenAiEventMapper {
 
         let mut events = Vec::new();
         if let Some(content) = choice.delta.content.clone() {
-            events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+            if let Some(ref tokenizer) = self.tokenizer {
+                let tokens = tokenizer.encode_with_special_tokens(&content);
+                for token in tokens {
+                    if let Ok(token_text) = tokenizer.decode(vec![token]) {
+                        if !token_text.is_empty() {
+                            events.push(Ok(LanguageModelCompletionEvent::Text(token_text)));
+                        }
+                    }
+                }
+            } else {
+                for ch in content.chars() {
+                    events.push(Ok(LanguageModelCompletionEvent::Text(ch.to_string())));
+                }
+            }
         }
 
         if let Some(tool_calls) = choice.delta.tool_calls.as_ref() {

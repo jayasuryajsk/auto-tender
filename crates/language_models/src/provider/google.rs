@@ -569,7 +569,10 @@ impl GoogleEventMapper {
                     .into_iter()
                     .for_each(|part| match part {
                         Part::TextPart(text_part) => {
-                            events.push(Ok(LanguageModelCompletionEvent::Text(text_part.text)))
+                            // Split text into individual characters for smooth streaming
+                            for ch in text_part.text.chars() {
+                                events.push(Ok(LanguageModelCompletionEvent::Text(ch.to_string())));
+                            }
                         }
                         Part::InlineDataPart(_) => {}
                         Part::FunctionCallPart(function_call_part) => {

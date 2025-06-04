@@ -79,11 +79,34 @@ pub struct ActiveThread {
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     open_feedback_editors: HashMap<MessageId, Entity<Editor>>,
     _load_edited_message_context_task: Option<Task<()>>,
+    // Streaming optimization: periodic flush task
+    flush_buffers_task: Option<Task<()>>,
+}
+
+enum RenderedMessageSegment {
+    DeferredText {
+        raw_text: SharedString,
+    },
+    DeferredThinking {
+        raw_text: SharedString,
+        scroll_handle: ScrollHandle,
+    },
+    PopulatedText {
+        markdown_entity: Entity<Markdown>,
+    },
+    PopulatedThinking {
+        content: Entity<Markdown>,
+        scroll_handle: ScrollHandle,
+    },
 }
 
 struct RenderedMessage {
     language_registry: Arc<LanguageRegistry>,
     segments: Vec<RenderedMessageSegment>,
+    // Streaming optimization: accumulate text before parsing
+    text_buffer: String,
+    thinking_buffer: String,
+    last_parse_time: Option<std::time::Instant>,
 }
 
 #[derive(Clone)]
@@ -95,78 +118,283 @@ struct RenderedToolUse {
 
 impl RenderedMessage {
     fn from_segments(
-        segments: &[MessageSegment],
+        segments_data: &[MessageSegment], // Renamed from segments to segments_data for clarity
         language_registry: Arc<LanguageRegistry>,
         cx: &mut App,
     ) -> Self {
         let mut this = Self {
             language_registry,
-            segments: Vec::with_capacity(segments.len()),
+            segments: Vec::with_capacity(segments_data.len()),
+            text_buffer: String::new(),
+            thinking_buffer: String::new(),
+            last_parse_time: None,
         };
-        for segment in segments {
-            this.push_segment(segment, cx);
+        for segment_datum in segments_data { // Iterate over segments_data
+            this.push_segment(segment_datum, cx); // Call modified push_segment
         }
         this
     }
 
+    fn from_segments_deferred(
+        segments_data: &[MessageSegment], // Renamed for clarity
+        language_registry: Arc<LanguageRegistry>,
+        // cx: &mut App, // cx is no longer needed here
+    ) -> Self {
+        let mut new_rendered_segments = Vec::with_capacity(segments_data.len());
+        for segment_datum in segments_data {
+            match segment_datum {
+                MessageSegment::Text(text) => {
+                    new_rendered_segments
+                        .push(RenderedMessageSegment::DeferredText { raw_text: text.clone().into() });
+                }
+                MessageSegment::Thinking { text, .. } => {
+                    new_rendered_segments
+                        .push(RenderedMessageSegment::DeferredThinking {
+                            raw_text: text.clone().into(),
+                            scroll_handle: ScrollHandle::default(),
+                        });
+                }
+                MessageSegment::RedactedThinking(_) => {
+                    // This variant does not produce a rendered segment in existing logic either.
+                }
+            }
+        }
+
+        Self {
+            language_registry,
+            segments: new_rendered_segments,
+            text_buffer: String::new(),
+            thinking_buffer: String::new(),
+            last_parse_time: None,
+        }
+        // Create placeholder segments first for immediate display
+        // Removed old loop calling this.push_segment_deferred(segment, cx);
+        // The new logic is in the loop above.
+    }
+
     fn append_thinking(&mut self, text: &String, cx: &mut App) {
-        if let Some(RenderedMessageSegment::Thinking {
-            content,
-            scroll_handle,
-        }) = self.segments.last_mut()
-        {
-            content.update(cx, |markdown, cx| {
-                markdown.append(text, cx);
-            });
-            scroll_handle.scroll_to_bottom();
+        // Accumulate text for streaming optimization
+        self.thinking_buffer.push_str(text);
+        
+        // Check if we should update (debouncing)
+        let should_update = if let Some(last_time) = self.last_parse_time {
+            last_time.elapsed().as_millis() > 50 || self.thinking_buffer.len() > 1000
         } else {
-            self.segments.push(RenderedMessageSegment::Thinking {
-                content: parse_markdown(text.into(), self.language_registry.clone(), cx),
-                scroll_handle: ScrollHandle::default(),
-            });
+            true
+        };
+
+        if should_update {
+            // Check if we have an existing thinking segment
+            let mut thinking_segment_exists_and_is_populated = false;
+            if let Some(RenderedMessageSegment::PopulatedThinking { .. }) = self.segments.last() {
+                thinking_segment_exists_and_is_populated = true;
+            }
+            
+            if thinking_segment_exists_and_is_populated {
+                // Extract the content entity to flush buffer
+                let content_entity = if let Some(RenderedMessageSegment::PopulatedThinking { content, .. }) = self.segments.last() {
+                    content.clone()
+                } else {
+                    return; // Should not happen given the check above
+                };
+                
+                // Flush the buffer
+                self.flush_thinking_buffer_for_entity(&content_entity, cx);
+                
+                // Now scroll to bottom
+                if let Some(RenderedMessageSegment::PopulatedThinking { scroll_handle, .. }) = self.segments.last_mut() {
+                    scroll_handle.scroll_to_bottom();
+                }
+                
+                self.last_parse_time = Some(std::time::Instant::now());
+            } else if !self.thinking_buffer.is_empty() {
+                // Create new thinking segment (now PopulatedThinking)
+                let content = parse_markdown(self.thinking_buffer.clone().into(), self.language_registry.clone(), cx);
+                self.segments.push(RenderedMessageSegment::PopulatedThinking {
+                    content,
+                    scroll_handle: ScrollHandle::default(),
+                });
+                self.thinking_buffer.clear();
+                self.last_parse_time = Some(std::time::Instant::now());
+            }
         }
     }
 
     fn append_text(&mut self, text: &String, cx: &mut App) {
-        if let Some(RenderedMessageSegment::Text(markdown)) = self.segments.last_mut() {
-            markdown.update(cx, |markdown, cx| markdown.append(text, cx));
+        // Accumulate text for streaming optimization  
+        self.text_buffer.push_str(text);
+        
+        // Check if we should update (debouncing)
+        let should_update = if let Some(last_time) = self.last_parse_time {
+            last_time.elapsed().as_millis() > 50 || self.text_buffer.len() > 1000
         } else {
-            self.segments
-                .push(RenderedMessageSegment::Text(parse_markdown(
-                    SharedString::from(text),
-                    self.language_registry.clone(),
-                    cx,
-                )));
+            true
+        };
+
+        if let Some(RenderedMessageSegment::PopulatedText { markdown_entity }) = self.segments.last_mut() {
+            if should_update {
+                // Clone the entity to avoid borrow issues
+                let markdown_entity_clone = markdown_entity.clone();
+                self.flush_text_buffer_for_entity(&markdown_entity_clone, cx);
+                self.last_parse_time = Some(std::time::Instant::now());
+            }
+        } else if !self.text_buffer.is_empty() {
+            let markdown = parse_markdown(
+                SharedString::from(self.text_buffer.clone()),
+                self.language_registry.clone(),
+                cx,
+            );
+            self.segments.push(RenderedMessageSegment::PopulatedText { markdown_entity: markdown });
+            self.text_buffer.clear();
+            self.last_parse_time = Some(std::time::Instant::now());
+        }
+    }
+
+    fn flush_text_buffer_for_entity(&mut self, markdown: &Entity<Markdown>, cx: &mut App) {
+        if !self.text_buffer.is_empty() {
+            let current_text = markdown.read(cx).source().to_string();
+            let new_text = current_text + &self.text_buffer;
+            markdown.update(cx, |markdown, cx| {
+                markdown.replace(new_text, cx);
+            });
+            self.text_buffer.clear();
+        }
+    }
+
+    fn flush_thinking_buffer_for_entity(&mut self, content: &Entity<Markdown>, cx: &mut App) {
+        if !self.thinking_buffer.is_empty() {
+            let current_text = content.read(cx).source().to_string();
+            let new_text = current_text + &self.thinking_buffer;
+            content.update(cx, |markdown, cx| {
+                markdown.replace(new_text, cx);
+            });
+            self.thinking_buffer.clear();
+        }
+    }
+
+    fn flush_text_buffer(&mut self, markdown: &Entity<Markdown>, cx: &mut App) {
+        if !self.text_buffer.is_empty() {
+            let current_text = markdown.read(cx).source().to_string();
+            let new_text = current_text + &self.text_buffer;
+            markdown.update(cx, |markdown, cx| {
+                markdown.replace(new_text, cx);
+            });
+            self.text_buffer.clear();
+        }
+    }
+
+    fn flush_thinking_buffer(&mut self, content: &Entity<Markdown>, cx: &mut App) {
+        if !self.thinking_buffer.is_empty() {
+            let current_text = content.read(cx).source().to_string();
+            let new_text = current_text + &self.thinking_buffer;
+            content.update(cx, |markdown, cx| {
+                markdown.replace(new_text, cx);
+            });
+            self.thinking_buffer.clear();
+        }
+    }
+
+    // Ensure pending buffers are flushed when streaming stops
+    fn flush_all_buffers(&mut self, cx: &mut App) {
+        // Collect entities to avoid borrow issues
+        let mut text_entities = Vec::new();
+        let mut thinking_entities = Vec::new();
+        
+        for segment in &self.segments {
+            match segment {
+                RenderedMessageSegment::PopulatedText { markdown_entity } => {
+                    text_entities.push(markdown_entity.clone());
+                }
+                RenderedMessageSegment::PopulatedThinking { content, .. } => {
+                    thinking_entities.push(content.clone());
+                }
+                RenderedMessageSegment::DeferredText { .. } | RenderedMessageSegment::DeferredThinking { .. } => {
+                    // Deferred segments don't have entities to flush yet.
+                }
+            }
+        }
+        
+        // Flush text buffers
+        for entity in text_entities {
+            self.flush_text_buffer_for_entity(&entity, cx);
+        }
+        
+        // Flush thinking buffers  
+        for entity in thinking_entities {
+            self.flush_thinking_buffer_for_entity(&entity, cx);
         }
     }
 
     fn push_segment(&mut self, segment: &MessageSegment, cx: &mut App) {
         match segment {
             MessageSegment::Thinking { text, .. } => {
-                self.segments.push(RenderedMessageSegment::Thinking {
-                    content: parse_markdown(text.into(), self.language_registry.clone(), cx),
+                let entity = parse_markdown(text.into(), self.language_registry.clone(), cx);
+                self.segments.push(RenderedMessageSegment::PopulatedThinking {
+                    content: entity,
                     scroll_handle: ScrollHandle::default(),
                 })
             }
             MessageSegment::Text(text) => {
+                let entity = parse_markdown(text.into(), self.language_registry.clone(), cx);
                 self.segments
-                    .push(RenderedMessageSegment::Text(parse_markdown(
-                        text.into(),
-                        self.language_registry.clone(),
-                        cx,
-                    )))
+                    .push(RenderedMessageSegment::PopulatedText { markdown_entity: entity })
             }
             MessageSegment::RedactedThinking(_) => {}
         };
     }
-}
 
-enum RenderedMessageSegment {
-    Thinking {
-        content: Entity<Markdown>,
-        scroll_handle: ScrollHandle,
-    },
-    Text(Entity<Markdown>),
+    fn populate_deferred_content(&mut self, cx: &mut App) {
+        let old_segments = std::mem::take(&mut self.segments);
+        let mut new_segments = Vec::with_capacity(old_segments.len());
+
+        for segment in old_segments {
+            match segment {
+                RenderedMessageSegment::DeferredText { raw_text } => {
+                    let markdown_entity =
+                        parse_markdown(raw_text, self.language_registry.clone(), cx);
+                    new_segments.push(RenderedMessageSegment::PopulatedText { markdown_entity });
+                }
+                RenderedMessageSegment::DeferredThinking {
+                    raw_text,
+                    scroll_handle,
+                } => {
+                    let content_entity =
+                        parse_markdown(raw_text, self.language_registry.clone(), cx);
+                    new_segments.push(RenderedMessageSegment::PopulatedThinking {
+                        content: content_entity,
+                        scroll_handle,
+                    });
+                }
+                populated_segment @ (RenderedMessageSegment::PopulatedText { .. }
+                | RenderedMessageSegment::PopulatedThinking { .. }) => {
+                    // Already populated, just move it to the new Vec
+                    new_segments.push(populated_segment);
+                }
+            }
+        }
+        self.segments = new_segments;
+
+        // After populating, ensure any buffered text (if applicable from other logic) is parsed.
+        // This part might be redundant if deferred segments don't also use buffers,
+        // but included for completeness if buffer logic is still relevant.
+        if !self.text_buffer.is_empty() {
+            let text = std::mem::take(&mut self.text_buffer);
+            let entity = parse_markdown(text.into(), self.language_registry.clone(), cx);
+            self.segments
+                .push(RenderedMessageSegment::PopulatedText { markdown_entity: entity });
+            self.last_parse_time = Some(std::time::Instant::now());
+        }
+        if !self.thinking_buffer.is_empty() {
+            let text = std::mem::take(&mut self.thinking_buffer);
+            let entity = parse_markdown(text.into(), self.language_registry.clone(), cx);
+            self.segments
+                .push(RenderedMessageSegment::PopulatedThinking {
+                    content: entity,
+                    scroll_handle: ScrollHandle::default(), // Or retrieve if stored
+                });
+            self.last_parse_time = Some(std::time::Instant::now());
+        }
+    }
 }
 
 fn parse_markdown(
@@ -796,6 +1024,7 @@ impl ActiveThread {
             notification_subscriptions: HashMap::default(),
             open_feedback_editors: HashMap::default(),
             _load_edited_message_context_task: None,
+            flush_buffers_task: None,
         };
 
         for message in thread.read(cx).messages().cloned().collect::<Vec<_>>() {
@@ -872,13 +1101,14 @@ impl ActiveThread {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Create the rendered message FIRST before updating the UI list
+        let rendered_message = RenderedMessage::from_segments(segments, self.language_registry.clone(), cx);
+        self.rendered_messages_by_id.insert(*id, rendered_message);
+
+        // THEN update the UI list to prevent empty bubble flash
         let old_len = self.messages.len();
         self.messages.push(*id);
         self.list_state.splice(old_len..old_len, 1);
-
-        let rendered_message =
-            RenderedMessage::from_segments(segments, self.language_registry.clone(), cx);
-        self.rendered_messages_by_id.insert(*id, rendered_message);
     }
 
     fn edited_message(
@@ -989,36 +1219,52 @@ impl ActiveThread {
             | ThreadEvent::SummaryChanged => {
                 self.save_thread(cx);
             }
-            ThreadEvent::Stopped(reason) => match reason {
-                Ok(StopReason::EndTurn | StopReason::MaxTokens) => {
-                    let thread = self.thread.read(cx);
-                    self.show_notification(
-                        if thread.used_tools_since_last_user_message() {
-                            "Finished running tools"
-                        } else {
-                            "New message"
-                        },
-                        IconName::ZedAssistant,
-                        window,
-                        cx,
-                    );
+            ThreadEvent::Stopped(reason) => {
+                // Stop periodic flushing and flush all pending buffers when streaming stops
+                self.stop_periodic_flush();
+                for rendered_message in self.rendered_messages_by_id.values_mut() {
+                    rendered_message.flush_all_buffers(cx);
                 }
-                _ => {}
-            },
+
+                match reason {
+                    Ok(StopReason::EndTurn | StopReason::MaxTokens) => {
+                        let thread = self.thread.read(cx);
+                        self.show_notification(
+                            if thread.used_tools_since_last_user_message() {
+                                "Finished running tools"
+                            } else {
+                                "New message"
+                            },
+                            IconName::ZedAssistant,
+                            window,
+                            cx,
+                        );
+                    }
+                    _ => {}
+                }
+            }
             ThreadEvent::ToolConfirmationNeeded => {
                 self.show_notification("Waiting for tool confirmation", IconName::Info, window, cx);
             }
             ThreadEvent::StreamedAssistantText(message_id, text) => {
                 if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
                     rendered_message.append_text(text, cx);
+                    cx.notify();
                 }
             }
             ThreadEvent::StreamedAssistantThinking(message_id, text) => {
                 if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
                     rendered_message.append_thinking(text, cx);
+                    cx.notify();
                 }
             }
             ThreadEvent::MessageAdded(message_id) => {
+                // Stop periodic flushing and flush any pending buffers when a message is complete
+                self.stop_periodic_flush();
+                if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
+                    rendered_message.flush_all_buffers(cx);
+                }
+
                 if let Some(message_segments) = self
                     .thread
                     .read(cx)
@@ -1981,7 +2227,6 @@ impl ActiveThread {
                         .id(("user-message", ix))
                         .bg(editor_bg_color)
                         .rounded_lg()
-                        .shadow_md()
                         .border_1()
                         .border_color(colors.border)
                         .hover(|hover| hover.border_color(colors.text_accent.opacity(0.5)))
@@ -2278,6 +2523,28 @@ impl ActiveThread {
         window: &Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
+        // If it's a user message, render the raw text immediately without Markdown parsing.
+        let message = self.thread.read(cx).message(message_id);
+        if let Some(msg) = message {
+            if msg.role == Role::User {
+                // Concatenate all segments into plain text.
+                let full_text = msg
+                    .segments
+                    .iter()
+                    .map(|seg| match seg {
+                        MessageSegment::Text(text) => text.clone().to_string(),
+                        MessageSegment::Thinking { text, .. } => text.clone(),
+                        MessageSegment::RedactedThinking(_) => String::new(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("");
+                return div()
+                    .text_ui(cx)
+                    .child(Label::new(full_text))
+                    .into_any_element();
+            }
+        }
+
         let is_last_message = self.messages.last() == Some(&message_id);
         let is_generating = self.thread.read(cx).is_generating();
         let pending_thinking_segment_index = if is_generating && is_last_message && !has_tool_uses {
@@ -2286,7 +2553,7 @@ impl ActiveThread {
                 .iter()
                 .enumerate()
                 .next_back()
-                .filter(|(_, segment)| matches!(segment, RenderedMessageSegment::Thinking { .. }))
+                .filter(|(_, segment)| matches!(segment, RenderedMessageSegment::PopulatedThinking { .. } | RenderedMessageSegment::DeferredThinking { .. })) // Adjusted match
                 .map(|(index, _)| index)
         } else {
             None
@@ -2309,7 +2576,7 @@ impl ActiveThread {
             .children(
                 rendered_message.segments.iter().enumerate().map(
                     |(index, segment)| match segment {
-                        RenderedMessageSegment::Thinking {
+                        RenderedMessageSegment::PopulatedThinking {
                             content,
                             scroll_handle,
                         } => self
@@ -2323,9 +2590,9 @@ impl ActiveThread {
                                 cx,
                             )
                             .into_any_element(),
-                        RenderedMessageSegment::Text(markdown) => {
+                        RenderedMessageSegment::PopulatedText { markdown_entity } => {
                             let markdown_element = MarkdownElement::new(
-                                markdown.clone(),
+                                markdown_entity.clone(), // Changed from markdown.clone()
                                 if is_user_message {
                                     let mut style = default_markdown_style(window, cx);
                                     let mut text_style = window.text_style();
@@ -2347,83 +2614,6 @@ impl ActiveThread {
                                 },
                             );
 
-                            let markdown_element = if is_assistant_message {
-                                markdown_element.code_block_renderer(
-                                    markdown::CodeBlockRenderer::Custom {
-                                        render: Arc::new({
-                                            let workspace = workspace.clone();
-                                            let active_thread = cx.entity();
-                                            move |kind,
-                                                  parsed_markdown,
-                                                  range,
-                                                  metadata,
-                                                  window,
-                                                  cx| {
-                                                render_markdown_code_block(
-                                                    message_id,
-                                                    range.start,
-                                                    kind,
-                                                    parsed_markdown,
-                                                    metadata,
-                                                    active_thread.clone(),
-                                                    workspace.clone(),
-                                                    window,
-                                                    cx,
-                                                )
-                                            }
-                                        }),
-                                        transform: Some(Arc::new({
-                                            let active_thread = cx.entity();
-                                            let editor_bg = cx.theme().colors().editor_background;
-
-                                            move |el, range, metadata, _, cx| {
-                                                let can_expand = metadata.line_count
-                                                    > MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK;
-                                                if !can_expand {
-                                                    return el;
-                                                }
-
-                                                let is_expanded = active_thread
-                                                    .read(cx)
-                                                    .expanded_code_blocks
-                                                    .get(&(message_id, range.start))
-                                                    .copied()
-                                                    .unwrap_or(false);
-                                                if is_expanded {
-                                                    return el;
-                                                }
-
-                                                el.child(
-                                                    div()
-                                                        .absolute()
-                                                        .bottom_0()
-                                                        .left_0()
-                                                        .w_full()
-                                                        .h_1_4()
-                                                        .rounded_b_lg()
-                                                        .bg(linear_gradient(
-                                                            0.,
-                                                            linear_color_stop(editor_bg, 0.),
-                                                            linear_color_stop(
-                                                                editor_bg.opacity(0.),
-                                                                1.,
-                                                            ),
-                                                        )),
-                                                )
-                                            }
-                                        })),
-                                    },
-                                )
-                            } else {
-                                markdown_element.code_block_renderer(
-                                    markdown::CodeBlockRenderer::Default {
-                                        copy_button: false,
-                                        copy_button_on_hover: false,
-                                        border: true,
-                                    },
-                                )
-                            };
-
                             div()
                                 .child(markdown_element.on_url_click({
                                     let workspace = self.workspace.clone();
@@ -2433,9 +2623,15 @@ impl ActiveThread {
                                 }))
                                 .into_any_element()
                         }
+                        RenderedMessageSegment::DeferredText { .. } | RenderedMessageSegment::DeferredThinking { .. } => {
+                            // Render a minimal placeholder for deferred segments.
+                            // This will be replaced when populate_deferred_content runs.
+                            div().into_any_element()
+                        }
                     },
                 ),
             )
+            .into_any_element()
     }
 
     fn tool_card_border_color(&self, cx: &Context<Self>) -> Hsla {
@@ -3405,6 +3601,46 @@ impl ActiveThread {
                 })
                 .log_err();
         }))
+    }
+
+    fn start_periodic_flush(&mut self, cx: &mut Context<Self>) {
+        if self.flush_buffers_task.is_some() {
+            return; // Already running
+        }
+        
+        self.flush_buffers_task = Some(cx.spawn(async move |thread, cx| {
+            loop {
+                // Flush every 100ms for smooth streaming
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
+                
+                let should_continue = thread
+                    .update(cx, |thread, cx| {
+                        let mut any_flushed = false;
+                        for rendered_message in thread.rendered_messages_by_id.values_mut() {
+                            if !rendered_message.text_buffer.is_empty() || !rendered_message.thinking_buffer.is_empty() {
+                                rendered_message.flush_all_buffers(cx);
+                                any_flushed = true;
+                            }
+                        }
+                        if any_flushed {
+                            cx.notify();
+                        }
+                        // Continue if we're still streaming (has buffers task)
+                        thread.flush_buffers_task.is_some()
+                    })
+                    .unwrap_or(false);
+                
+                if !should_continue {
+                    break;
+                }
+            }
+        }));
+    }
+
+    fn stop_periodic_flush(&mut self) {
+        self.flush_buffers_task.take();
     }
 }
 

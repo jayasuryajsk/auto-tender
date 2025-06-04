@@ -25,6 +25,7 @@ use util::{ResultExt as _, post_inc};
 use crate::context_store::{ContextStore, ContextStoreEvent};
 use crate::thread::Thread;
 
+
 pub const RULES_ICON: IconName = IconName::Context;
 
 pub enum ContextKind {
@@ -848,18 +849,31 @@ pub fn load_context(
         }
     }
 
+    // Add semantic search if available
+    let semantic_search_task = search_semantic_index(project, cx);
+
     cx.background_spawn(async move {
-        let load_results = future::join_all(load_tasks).await;
+        let (load_results, semantic_results) = future::join(
+            future::join_all(load_tasks),
+            semantic_search_task
+        ).await;
 
         let mut contexts = Vec::new();
         let mut text = String::new();
         let mut referenced_buffers = HashSet::default();
+        
+        // Process regular context results
         for context in load_results {
             let Some((context, buffers)) = context else {
                 continue;
             };
             contexts.push(context);
             referenced_buffers.extend(buffers);
+        }
+
+        // Add semantic search results if available
+        if let Some(semantic_context) = semantic_results {
+            contexts.extend(semantic_context);
         }
 
         let mut file_context = Vec::new();
@@ -998,6 +1012,14 @@ pub fn load_context(
             referenced_buffers,
         }
     })
+}
+
+/// Search the semantic index for relevant documents based on the current thread context
+fn search_semantic_index(
+    _project: &Entity<Project>,
+    _cx: &mut App,
+) -> Task<Option<Vec<AgentContext>>> {
+    Task::ready(None)
 }
 
 fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<Arc<Path>> {

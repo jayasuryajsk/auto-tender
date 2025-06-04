@@ -646,14 +646,17 @@ pub struct AnthropicEventMapper {
     tool_uses_by_index: HashMap<usize, RawToolUse>,
     usage: Usage,
     stop_reason: StopReason,
+    tokenizer: Option<tiktoken_rs::CoreBPE>,
 }
 
 impl AnthropicEventMapper {
     pub fn new() -> Self {
+        let tokenizer = tiktoken_rs::get_bpe_from_model("gpt-4o").ok();
         Self {
             tool_uses_by_index: HashMap::default(),
             usage: Usage::default(),
             stop_reason: StopReason::EndTurn,
+            tokenizer,
         }
     }
 
@@ -680,7 +683,22 @@ impl AnthropicEventMapper {
                 content_block,
             } => match content_block {
                 ResponseContent::Text { text } => {
-                    vec![Ok(LanguageModelCompletionEvent::Text(text))]
+                    let mut events = Vec::new();
+                    if let Some(ref tokenizer) = self.tokenizer {
+                        let tokens = tokenizer.encode_with_special_tokens(&text);
+                        for token in tokens {
+                            if let Ok(token_text) = tokenizer.decode(vec![token]) {
+                                if !token_text.is_empty() {
+                                    events.push(Ok(LanguageModelCompletionEvent::Text(token_text)));
+                                }
+                            }
+                        }
+                    } else {
+                        for ch in text.chars() {
+                            events.push(Ok(LanguageModelCompletionEvent::Text(ch.to_string())));
+                        }
+                    }
+                    events
                 }
                 ResponseContent::Thinking { thinking } => {
                     vec![Ok(LanguageModelCompletionEvent::Thinking {
@@ -707,7 +725,22 @@ impl AnthropicEventMapper {
             },
             Event::ContentBlockDelta { index, delta } => match delta {
                 ContentDelta::TextDelta { text } => {
-                    vec![Ok(LanguageModelCompletionEvent::Text(text))]
+                    let mut events = Vec::new();
+                    if let Some(ref tokenizer) = self.tokenizer {
+                        let tokens = tokenizer.encode_with_special_tokens(&text);
+                        for token in tokens {
+                            if let Ok(token_text) = tokenizer.decode(vec![token]) {
+                                if !token_text.is_empty() {
+                                    events.push(Ok(LanguageModelCompletionEvent::Text(token_text)));
+                                }
+                            }
+                        }
+                    } else {
+                        for ch in text.chars() {
+                            events.push(Ok(LanguageModelCompletionEvent::Text(ch.to_string())));
+                        }
+                    }
+                    events
                 }
                 ContentDelta::ThinkingDelta { thinking } => {
                     vec![Ok(LanguageModelCompletionEvent::Thinking {

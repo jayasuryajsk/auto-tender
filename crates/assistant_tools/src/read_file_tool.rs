@@ -46,11 +46,30 @@ pub struct ReadFileToolInput {
     pub end_line: Option<u32>,
 }
 
-const READ_FILE_MARKDOWNIFY_EXTENSIONS: &[&str] = &[
-    "pdf", "docx", "odt", "pptx", "xlsx", "xls", "xlsm", "xlsb", "xla", "xlam", "ods", "csv", "zip"
+const READ_FILE_MARKITDOWN_EXTENSIONS: &[&str] = &[
+    // Microsoft Office formats
+    "docx", "pptx", "xlsx", "xls", "xlsm", "xlsb", "xla", "xlam",
+    // OpenDocument formats  
+    "odt", "ods", "odp",
+    // PDF
+    "pdf",
+    // Images (with OCR support)
+    "jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "webp", "ico", "svg",
+    // Audio (with speech transcription)
+    "wav", "mp3", "m4a", "aac", "ogg", "flac",
+    // Web and markup formats
+    "html", "htm", "xml", "json",
+    // Text and data formats
+    "csv", "tsv", "txt",
+    // E-books
+    "epub",
+    // Archives
+    "zip",
+    // Email formats
+    "msg", "eml"
 ];
 
-// Convert document using backend MarkItDown service
+// Convert document using Microsoft MarkItDown
 async fn convert_document_via_backend(file_path: &PathBuf) -> Result<ToolResultOutput> {
     use std::process::Command;
     
@@ -169,7 +188,7 @@ impl Tool for ReadFileTool {
                 .ok_or_else(|| anyhow!("Couldn't resolve on-disk path for '{}',", file_path))?;
             // Check if the file should be converted via MarkItDown
             if let Some(ext) = absolute_disk_path.extension().and_then(|s| s.to_str()) {
-                if READ_FILE_MARKDOWNIFY_EXTENSIONS.contains(&ext) {
+                if READ_FILE_MARKITDOWN_EXTENSIONS.contains(&ext) {
                     // Convert the document using Microsoft MarkItDown
                     let path_for_convert = absolute_disk_path.clone();
                     let result = convert_document_via_backend(&path_for_convert).await

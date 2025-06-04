@@ -51,7 +51,6 @@ util.workspace = true
 workspace.workspace = true
 worktree.workspace = true
 workspace-hack.workspace = true
-markdownify = "0.1.5"
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

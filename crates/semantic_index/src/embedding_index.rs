@@ -17,15 +17,33 @@ use log;
 use project::{Entry, UpdatedEntriesSet, Worktree};
 use serde::{Deserialize, Serialize};
 use smol::channel;
-use smol::unblock;
-use markdownify::convert as markdownify_convert;
 use std::{cmp::Ordering, future::Future, iter, path::Path, pin::pin, sync::Arc, time::Duration};
 use std::path::PathBuf;
+use std::process::Command;
 use util::ResultExt;
 use worktree::Snapshot;
 
-const MARKDOWNIFY_EXTENSIONS: &[&str] = &[
-    "pdf", "docx", "odt", "pptx", "xlsx", "xls", "xlsm", "xlsb", "xla", "xlam", "ods", "csv", "zip"
+const MARKITDOWN_EXTENSIONS: &[&str] = &[
+    // Microsoft Office formats
+    "docx", "pptx", "xlsx", "xls", "xlsm", "xlsb", "xla", "xlam",
+    // OpenDocument formats  
+    "odt", "ods", "odp",
+    // PDF
+    "pdf",
+    // Images (with OCR support)
+    "jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "webp", "ico", "svg",
+    // Audio (with speech transcription)
+    "wav", "mp3", "m4a", "aac", "ogg", "flac",
+    // Web and markup formats
+    "html", "htm", "xml", "json",
+    // Text and data formats
+    "csv", "tsv", "txt",
+    // E-books
+    "epub",
+    // Archives
+    "zip",
+    // Email formats
+    "msg", "eml"
 ];
 
 pub struct EmbeddingIndex {
@@ -246,17 +264,14 @@ impl EmbeddingIndex {
                         cx.spawn(async {
                             while let Ok((entry, handle)) = entries.recv().await {
                                 let entry_abs_path = worktree_abs_path.join(&entry.path);
-                                // Clone path for markdownify conversion (separate variable)
+                                // Clone path for markitdown conversion (separate variable)
                                 let path_for_convert = entry_abs_path.clone();
                                 // Determine extension of the file
                                 let ext = entry.path.extension().and_then(|s| s.to_str()).unwrap_or("");
                                 // Prepare text and language for chunking
-                                let (text, language) = if MARKDOWNIFY_EXTENSIONS.contains(&ext) {
-                                    // Convert document to Markdown (in background thread)
-                                    match smol::unblock(move || {
-                                        markdownify_convert(&path_for_convert, None)
-                                            .map_err(|e| anyhow!("Markdownify conversion failed for {:?}: {}", path_for_convert, e))
-                                    }).await {
+                                let (text, language) = if MARKITDOWN_EXTENSIONS.contains(&ext) {
+                                    // Convert document to Markdown using MarkItDown
+                                    match convert_document_with_markitdown(path_for_convert).await {
                                         Ok(markdown) => {
                                             // Use Markdown language for chunking
                                             let lang = language_registry
@@ -267,7 +282,7 @@ impl EmbeddingIndex {
                                         }
                                         Err(e) => {
                                             // Log using original path
-                                            log::error!("Failed to convert {:?} to markdown: {}", entry_abs_path, e);
+                                            log::error!("Failed to convert {:?} to markdown using MarkItDown: {}", entry_abs_path, e);
                                             continue; // skip on conversion failure
                                         }
                                     }
@@ -503,4 +518,23 @@ pub struct EmbeddedChunk {
 
 fn db_key_for_path(path: &Arc<Path>) -> String {
     path.to_string_lossy().replace('/', "\0")
+}
+
+// Convert document using Microsoft MarkItDown
+async fn convert_document_with_markitdown(file_path: PathBuf) -> Result<String> {
+    smol::unblock(move || {
+        let output = Command::new("markitdown")
+            .arg(file_path.to_str().unwrap())
+            .output()
+            .map_err(|e| anyhow!("Failed to run markitdown: {}. Make sure Microsoft MarkItDown is installed with 'pip install markitdown[all]'", e))?;
+        
+        if output.status.success() {
+            let content = String::from_utf8(output.stdout)
+                .map_err(|e| anyhow!("MarkItDown output is not valid UTF-8: {}", e))?;
+            Ok(content)
+        } else {
+            let error = String::from_utf8_lossy(&output.stderr);
+            Err(anyhow!("MarkItDown conversion failed for {:?}: {}", file_path, error))
+        }
+    }).await
 }
