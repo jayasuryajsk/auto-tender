@@ -5,7 +5,6 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::Bound;
-use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use fs::MTime;
 use futures::{FutureExt as _, stream::StreamExt};
@@ -23,7 +22,7 @@ use std::process::Command;
 use util::ResultExt;
 use worktree::Snapshot;
 
-const MARKITDOWN_EXTENSIONS: &[&str] = &[
+pub const MARKITDOWN_EXTENSIONS: &[&str] = &[
     // Microsoft Office formats
     "docx", "pptx", "xlsx", "xls", "xlsm", "xlsb", "xla", "xlam",
     // OpenDocument formats  
@@ -85,9 +84,10 @@ impl EmbeddingIndex {
         &self,
         cx: &App,
     ) -> impl Future<Output = Result<()>> + use<> {
-        if !cx.is_staff() {
-            return async move { Ok(()) }.boxed();
-        }
+        // Always allow indexing for local development
+        // Original check: if !cx.is_staff() {
+        //     return async move { Ok(()) }.boxed();
+        // }
 
         let worktree = self.worktree.read(cx).snapshot();
         let worktree_abs_path = worktree.abs_path().clone();
@@ -107,9 +107,10 @@ impl EmbeddingIndex {
         updated_entries: UpdatedEntriesSet,
         cx: &App,
     ) -> impl Future<Output = Result<()>> + use<> {
-        if !cx.is_staff() {
-            return async move { Ok(()) }.boxed();
-        }
+        // Always allow indexing for local development
+        // Original check: if !cx.is_staff() {
+        //     return async move { Ok(()) }.boxed();
+        // }
 
         let worktree = self.worktree.read(cx).snapshot();
         let worktree_abs_path = worktree.abs_path().clone();
@@ -374,6 +375,7 @@ impl EmbeddingIndex {
                         path: chunked_file.path,
                         mtime: chunked_file.mtime,
                         chunks: Vec::new(),
+                        text: chunked_file.text.clone(),
                     };
 
                     let mut embedded_all_chunks = true;
@@ -508,6 +510,7 @@ pub struct EmbeddedFile {
     pub path: Arc<Path>,
     pub mtime: Option<MTime>,
     pub chunks: Vec<EmbeddedChunk>,
+    pub text: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -1,9 +1,8 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
 use assistant_tool::outline;
-use assistant_tool::{ActionLog, Tool, ToolResult, ToolResultOutput, ToolUseStatus};
-use gpui::{AnyWindowHandle, App, Entity, Task, WeakEntity};
-use gpui::AppContext;
+use assistant_tool::{ActionLog, Tool, ToolResult, ToolResultOutput};
+use gpui::{AnyWindowHandle, App, Entity, Task};
 
 use indoc::formatdoc;
 use itertools::Itertools;
@@ -16,7 +15,6 @@ use std::sync::Arc;
 use ui::{IconName, prelude::*};
 use util::markdown::MarkdownInlineCode;
 use std::path::PathBuf;
-use workspace::Workspace;
 
 /// If the model requests to read a file whose size exceeds this, then
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -167,7 +165,7 @@ impl Tool for ReadFileTool {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         _model: Arc<dyn LanguageModel>,
-        window: Option<AnyWindowHandle>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<ReadFileToolInput>(input) {

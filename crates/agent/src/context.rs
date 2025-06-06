@@ -17,6 +17,7 @@ use project::{Project, ProjectEntryId, ProjectPath, Worktree};
 use prompt_store::{PromptStore, UserPromptId};
 use ref_cast::RefCast;
 use rope::Point;
+use semantic_index::SemanticDb;
 use text::{Anchor, OffsetRangeExt as _};
 use ui::{Context, ElementId, IconName};
 use util::markdown::MarkdownCodeBlock;
@@ -849,14 +850,11 @@ pub fn load_context(
         }
     }
 
-    // Add semantic search if available
-    let semantic_search_task = search_semantic_index(project, cx);
+    // Semantic search is now on-demand via tools, not pre-fetched
+    // let semantic_search_task = search_semantic_index(project, cx);
 
     cx.background_spawn(async move {
-        let (load_results, semantic_results) = future::join(
-            future::join_all(load_tasks),
-            semantic_search_task
-        ).await;
+        let load_results = future::join_all(load_tasks).await;
 
         let mut contexts = Vec::new();
         let mut text = String::new();
@@ -869,11 +867,6 @@ pub fn load_context(
             };
             contexts.push(context);
             referenced_buffers.extend(buffers);
-        }
-
-        // Add semantic search results if available
-        if let Some(semantic_context) = semantic_results {
-            contexts.extend(semantic_context);
         }
 
         let mut file_context = Vec::new();
@@ -1016,10 +1009,241 @@ pub fn load_context(
 
 /// Search the semantic index for relevant documents based on the current thread context
 fn search_semantic_index(
-    _project: &Entity<Project>,
-    _cx: &mut App,
+    project: &Entity<Project>,
+    cx: &mut App,
 ) -> Task<Option<Vec<AgentContext>>> {
-    Task::ready(None)
+    let project = project.clone();
+    
+    cx.spawn(async move |cx| {
+        log::info!("🔍 Starting semantic index search for agent context");
+        
+        // Check if SemanticDb is available and get project index
+        let project_index = cx.update_global::<SemanticDb, _>(|semantic_db, cx| {
+            let result = semantic_db.project_index(project.clone(), cx);
+            log::info!("📊 Project index lookup result: {:?}", result.is_some());
+            result
+        }).ok()??;
+        
+        log::info!("✅ Successfully got project index, proceeding with search");
+        
+        // Debug: Check what files are in the project
+        let file_count = project.read_with(cx, |project, cx| {
+            let mut total_files = 0;
+            for worktree in project.worktrees(cx) {
+                let worktree = worktree.read(cx);
+                let file_count = worktree.entries(false, 0).count();
+                total_files += file_count;
+                log::info!("📁 Worktree '{}' contains {} entries", worktree.root_name(), file_count);
+                
+                // Log some sample files
+                for (i, entry) in worktree.entries(false, 0).enumerate() {
+                    if i < 5 {
+                        log::info!("📄 Sample file {}: {:?} (is_file: {})", i+1, entry.path, entry.is_file());
+                    }
+                }
+                if file_count > 5 {
+                    log::info!("... and {} more files", file_count - 5);
+                }
+            }
+            total_files
+        }).unwrap_or(0);
+        
+        log::info!("📊 Total files in project: {}", file_count);
+        
+        // Debug: Check indexing status
+        let indexing_status = project_index.read_with(cx, |index, _cx| {
+            index.status()
+        }).unwrap_or_else(|_| {
+            log::warn!("❌ Failed to read indexing status");
+            semantic_index::Status::Idle
+        });
+        
+        log::info!("📊 Indexing status: {:?}", indexing_status);
+        
+        // If still indexing, wait a moment
+        if matches!(indexing_status, semantic_index::Status::Loading | semantic_index::Status::Scanning { .. }) {
+            log::info!("⏳ Files are still being indexed, this may affect search results");
+        }
+        
+        // First try tender and business document specific searches
+        let specific_queries = vec![
+            "tender".to_string(),
+            "proposal".to_string(),
+            "technical capacity".to_string(),
+            "experience".to_string(),
+            "qualifications".to_string(),
+            "methodology".to_string(),
+            "approach".to_string(),
+            "requirements".to_string(),
+            "compliance".to_string(),
+            "appendix".to_string(),
+        ];
+        
+        log::info!("🔎 First trying specific searches: {:?}", specific_queries);
+        let search_limit = 15;
+        
+        // Debug: Wait longer for indexing if status shows scanning
+        if matches!(indexing_status, semantic_index::Status::Scanning { .. }) {
+            log::info!("⏳ Files are currently being indexed. Waiting 5 seconds...");
+            cx.background_spawn(async move {
+                smol::Timer::after(std::time::Duration::from_secs(5)).await;
+            }).await;
+            log::info!("⏳ Wait complete, proceeding with search");
+        }
+        
+        // Perform the semantic search with specific queries first
+        let search_results = project_index.read_with(cx, |index, cx| {
+            index.search(specific_queries.clone(), search_limit, cx)
+        }).ok()?;
+        
+        let mut search_results = search_results.await.log_err()?;
+        log::info!("📄 Specific search returned {} results", search_results.len());
+        
+        // If we didn't find enough results, try broader searches
+        if search_results.len() < 5 {
+            log::info!("🔄 Trying broader search terms...");
+            let broad_queries = vec![
+                "project".to_string(),
+                "management".to_string(),
+                "team".to_string(),
+                "delivery".to_string(),
+                "services".to_string(),
+                "capability".to_string(),
+                "portfolio".to_string(),
+                "client".to_string(),
+                "contract".to_string(),
+                "outcomes".to_string(),
+            ];
+            
+            let broad_search = project_index.read_with(cx, |index, cx| {
+                index.search(broad_queries, search_limit, cx)
+            }).ok()?;
+            
+            let mut broad_results = broad_search.await.log_err()?;
+            log::info!("📄 Broad search returned {} additional results", broad_results.len());
+            search_results.append(&mut broad_results);
+        }
+        
+        // If still no results, try the most basic possible searches
+        if search_results.len() == 0 {
+            log::info!("🔄 Still no results, trying most basic search terms...");
+            let basic_queries = vec![
+                "the".to_string(),
+                "and".to_string(),
+                "or".to_string(),
+                "in".to_string(),
+                "on".to_string(),
+                "a".to_string(),
+                "to".to_string(),
+                "of".to_string(),
+                "is".to_string(),
+                "it".to_string(),
+            ];
+            
+            let basic_search = project_index.read_with(cx, |index, cx| {
+                index.search(basic_queries, 5, cx)
+            }).ok()?;
+            
+            let mut basic_results = basic_search.await.log_err()?;
+            log::info!("📄 Basic search returned {} additional results", basic_results.len());
+            search_results.append(&mut basic_results);
+        }
+        
+        // Load the search results content from database
+        log::info!("📚 Attempting to load {} search results", search_results.len());
+        
+        // Get database connection from SemanticDb
+        let db_connection = cx.update_global::<SemanticDb, _>(|db, _cx| {
+            db.get_db_connection()
+        }).ok()?;
+        
+        let loaded_results = match SemanticDb::load_results(db_connection, search_results, &cx).await {
+            Ok(results) => {
+                log::info!("✅ Successfully loaded {} file contents", results.len());
+                results
+            }
+            Err(e) => {
+                log::warn!("❌ Failed to load search results: {}", e);
+                return None;
+            }
+        };
+        log::info!("💾 Loaded {} file contents from search results", loaded_results.len());
+        
+        // Convert loaded results to AgentContext by opening buffers
+        let mut agent_contexts = Vec::new();
+        let mut context_id = ContextId::zero();
+        
+        // Try to process search results one by one, skipping those with UTF-8 issues
+        for result in loaded_results {
+            log::info!("📁 Processing search result: {:?} (rows {}-{})", 
+                      result.path, result.row_range.start(), result.row_range.end());
+            
+            // Check if the excerpt content is valid UTF-8 
+            if result.excerpt_content.is_empty() {
+                log::warn!("⚠️ Skipping empty excerpt for: {:?}", result.path);
+                continue;
+            }
+            
+            // Find the worktree for this path
+            let Some(worktree) = project.read_with(cx, |project, cx| {
+                project.worktrees(cx)
+                    .find(|worktree| {
+                        let worktree = worktree.read(cx);
+                        worktree.abs_path().join(&result.path) == result.full_path
+                    })
+            }).ok()? else {
+                log::warn!("❌ Could not find worktree for path: {:?}", result.path);
+                continue;
+            };
+            
+            let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id()).ok()?;
+            
+            // Open buffer for this file
+            let project_path = ProjectPath { 
+                worktree_id, 
+                path: result.path.clone() 
+            };
+            
+            let buffer = project.update(cx, |project, cx| {
+                project.buffer_store().update(cx, |buffer_store, cx| {
+                    buffer_store.open_buffer(project_path, cx)
+                })
+            }).ok()?.await.log_err();
+            
+            if let Some(buffer) = buffer {
+                let context_handle = FileContextHandle {
+                    buffer: buffer.clone(),
+                    context_id: context_id.post_inc(),
+                };
+                
+                let file_context = FileContext {
+                    handle: context_handle,
+                    full_path: result.full_path.into(),
+                    text: result.excerpt_content.into(),
+                    is_outline: false,
+                };
+                
+                log::info!("✅ Successfully created agent context for: {:?}", result.path);
+                agent_contexts.push(AgentContext::File(file_context));
+                
+                // Limit to 5 contexts to avoid overwhelming the agent
+                if agent_contexts.len() >= 5 {
+                    log::info!("📊 Reached limit of 5 contexts, stopping");
+                    break;
+                }
+            } else {
+                log::warn!("❌ Failed to open buffer for: {:?}", result.path);
+            }
+        }
+        
+        if agent_contexts.is_empty() {
+            log::info!("❌ No agent contexts created from semantic search");
+            None
+        } else {
+            log::info!("🎉 Successfully created {} agent contexts from semantic search", agent_contexts.len());
+            Some(agent_contexts)
+        }
+    })
 }
 
 fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<Arc<Path>> {

@@ -8,18 +8,18 @@ mod summary_backlog;
 mod summary_index;
 mod worktree_index;
 
-use anyhow::{Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
-use fs::Fs;
 use gpui::{App, AppContext as _, AsyncApp, BorrowAppContext, Context, Entity, Global, WeakEntity};
+use heed::{types::{SerdeBincode, Str}};
 use language::LineEnding;
 use project::{Project, Worktree};
 use std::{
     cmp::Ordering,
     path::{Path, PathBuf},
+    process::Command,
     sync::Arc,
 };
-use util::ResultExt as _;
 use workspace::Workspace;
 
 pub use embedding::*;
@@ -36,6 +36,10 @@ pub struct SemanticDb {
 impl Global for SemanticDb {}
 
 impl SemanticDb {
+    pub fn get_db_connection(&self) -> Option<heed::Env> {
+        self.db_connection.clone()
+    }
+
     pub async fn new(
         db_path: PathBuf,
         embedding_provider: Arc<dyn EmbeddingProvider>,
@@ -88,8 +92,8 @@ impl SemanticDb {
     }
 
     pub async fn load_results(
+        db_connection: Option<heed::Env>,
         mut results: Vec<SearchResult>,
-        fs: &Arc<dyn Fs>,
         cx: &AsyncApp,
     ) -> Result<Vec<LoadedSearchResult>> {
         let mut max_scores_by_path = HashMap::<_, (f32, usize)>::default();
@@ -129,27 +133,66 @@ impl SemanticDb {
                 full_path = last_loaded_file.2.clone();
                 file_content = &last_loaded_file.3;
             } else {
-                let output = result.worktree.read_with(cx, |worktree, _cx| {
-                    let entry_abs_path = worktree.abs_path().join(&result.path);
+                // Get the file content from the database instead of filesystem
+                let db_full_path = result.worktree.read_with(cx, |worktree, _cx| {
                     let mut entry_full_path = PathBuf::from(worktree.root_name());
                     entry_full_path.push(&result.path);
-                    let file_content = async {
-                        let entry_abs_path = entry_abs_path;
-                        fs.load(&entry_abs_path).await
-                    };
-                    (entry_full_path, file_content)
+                    entry_full_path
                 })?;
-                full_path = output.0;
-                let Some(content) = output.1.await.log_err() else {
+
+                // Access the database to get the stored EmbeddedFile
+                if let Some(db_connection) = &db_connection {
+                    let db_content: Result<Option<String>> = cx.background_spawn({
+                        let path_for_db = result.path.clone();
+                        let worktree_abs_path = result.worktree.read_with(cx, |worktree, _cx| {
+                            worktree.abs_path().to_path_buf()
+                        })?;
+                        let db_connection = db_connection.clone();
+                        
+                        async move {
+                            // Open database for this worktree
+                            let txn = db_connection.read_txn()?;
+                            let db_name = worktree_abs_path.to_string_lossy();
+                            if let Some(db) = db_connection.open_database::<Str, SerdeBincode<crate::embedding_index::EmbeddedFile>>(&txn, Some(&db_name))? {
+                                // Create database key for the file path
+                                let db_key = path_for_db.to_string_lossy().replace('/', "\0");
+                                
+                                // Get the EmbeddedFile from database
+                                if let Some(embedded_file) = db.get(&txn, &db_key)? {
+                                    Ok(Some(embedded_file.text))
+                                } else {
+                                    Ok(None)
+                                }
+                            } else {
+                                Ok(None)
+                            }
+                        }
+                    }).await;
+
+                    match db_content {
+                        Ok(Some(text)) => {
+                            last_loaded_file = Some((
+                                result.worktree.clone(),
+                                result.path.clone(),
+                                db_full_path,
+                                text,
+                            ));
+                            file_content = &last_loaded_file.as_ref().unwrap().3;
+                            full_path = last_loaded_file.as_ref().unwrap().2.clone();
+                        }
+                        Ok(None) => {
+                            log::warn!("⚠️ File not found in database: {:?}", result.path);
+                            continue;
+                        }
+                        Err(e) => {
+                            log::warn!("⚠️ Failed to load file from database {:?}: {}", result.path, e);
+                            continue;
+                        }
+                    }
+                } else {
+                    log::warn!("⚠️ No database connection available");
                     continue;
-                };
-                last_loaded_file = Some((
-                    result.worktree.clone(),
-                    result.path.clone(),
-                    full_path.clone(),
-                    content,
-                ));
-                file_content = &last_loaded_file.as_ref().unwrap().3;
+                }
             };
 
             let query_index = max_scores_by_path[&(result.worktree.clone(), result.path.clone())].1;
@@ -275,6 +318,26 @@ impl Drop for SemanticDb {
     fn drop(&mut self) {
         self.db_connection.take().unwrap().prepare_for_closing();
     }
+}
+
+// Convert document using Microsoft MarkItDown for display purposes
+async fn convert_document_for_display(file_path: &Path) -> Result<String> {
+    let path_str = file_path.to_string_lossy().to_string();
+    smol::unblock(move || {
+        let output = Command::new("markitdown")
+            .arg(&path_str)
+            .output()
+            .map_err(|e| anyhow!("Failed to run markitdown: {}. Make sure Microsoft MarkItDown is installed with 'pip install markitdown[all]'", e))?;
+        
+        if output.status.success() {
+            let content = String::from_utf8(output.stdout)
+                .map_err(|e| anyhow!("MarkItDown output is not valid UTF-8: {}", e))?;
+            Ok(content)
+        } else {
+            let error = String::from_utf8_lossy(&output.stderr);
+            Err(anyhow!("MarkItDown conversion failed for {:?}: {}", path_str, error))
+        }
+    }).await
 }
 
 #[cfg(test)]

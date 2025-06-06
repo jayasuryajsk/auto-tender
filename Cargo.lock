@@ -689,6 +689,7 @@ dependencies = [
  "reqwest_client",
  "rust-embed",
  "schemars",
+ "semantic_index",
  "serde",
  "serde_json",
  "settings",

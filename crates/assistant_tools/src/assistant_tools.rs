@@ -13,6 +13,7 @@ mod now_tool;
 mod open_tool;
 mod read_file_tool;
 mod schema;
+mod semantic_search_tool;
 mod templates;
 mod terminal_tool;
 mod thinking_tool;
@@ -40,6 +41,7 @@ use crate::find_path_tool::FindPathTool;
 use crate::grep_tool::GrepTool;
 use crate::list_directory_tool::ListDirectoryTool;
 use crate::now_tool::NowTool;
+use crate::semantic_search_tool::SemanticSearchTool;
 use crate::thinking_tool::ThinkingTool;
 
 pub use edit_file_tool::EditFileToolInput;
@@ -67,6 +69,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(ThinkingTool);
     registry.register_tool(FetchTool::new(http_client));
     registry.register_tool(EditFileTool);
+    registry.register_tool(SemanticSearchTool);
 
     register_web_search_tool(&LanguageModelRegistry::global(cx), cx);
     cx.subscribe(
