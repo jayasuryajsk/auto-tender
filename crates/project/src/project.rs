@@ -907,6 +907,7 @@ impl Project {
             cx.subscribe(&image_store, Self::on_image_store_event)
                 .detach();
 
+
             let prettier_store = cx.new(|cx| {
                 PrettierStore::new(
                     node.clone(),
@@ -2534,6 +2535,8 @@ impl Project {
         })
     }
 
+
+
     async fn send_buffer_ordered_messages(
         this: WeakEntity<Self>,
         rx: UnboundedReceiver<BufferOrderedMessage>,
@@ -2683,6 +2686,8 @@ impl Project {
             }
         }
     }
+
+
 
     fn on_dap_store_event(
         &mut self,
@@ -2955,6 +2960,8 @@ impl Project {
 
         None
     }
+
+
 
     fn request_buffer_diff_recalculation(
         &mut self,

@@ -549,7 +549,26 @@ impl Telemetry {
                 let request = this.build_request(json_bytes, request_body)?;
                 let response = this.http_client.send(request).await?;
                 if response.status() != 200 {
-                    log::error!("Failed to send events: HTTP {:?}", response.status());
+                    let status = response.status();
+                    match status.as_u16() {
+                        401 => {
+                            log::warn!("Telemetry authentication failed (HTTP 401). This may indicate invalid credentials or the user is not signed in. Events will be logged locally but not sent to server.");
+                        }
+                        403 => {
+                            log::warn!("Telemetry access forbidden (HTTP 403). User may not have permission to send telemetry events.");
+                        }
+                        429 => {
+                            log::warn!("Telemetry rate limited (HTTP 429). Too many events sent in a short period.");
+                        }
+                        500..=599 => {
+                            log::warn!("Telemetry server error (HTTP {}). Server may be temporarily unavailable.", status.as_u16());
+                        }
+                        _ => {
+                            log::error!("Failed to send telemetry events: HTTP {}", status);
+                        }
+                    }
+                } else {
+                    log::debug!("Successfully sent telemetry events");
                 }
                 anyhow::Ok(())
             }

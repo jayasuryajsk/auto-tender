@@ -1072,9 +1072,29 @@ impl SerializableItem for Editor {
                 }
             }
             Ok(None) => {
-                return Task::ready(Err(anyhow!("No path or contents found for buffer")));
+                log::warn!("No serialized editor found for item_id: {:?}, workspace_id: {:?}. Creating a new editor.", item_id, workspace_id);
+                // Instead of failing, create a minimal editor state
+                return window.spawn(cx, {
+                    let project = project.clone();
+                    async move |cx| {
+                        // Create a new empty buffer
+                        let buffer = project
+                            .update(cx, |project, cx| project.create_buffer(cx))?
+                            .await?;
+
+                        cx.update(|window, cx| {
+                            cx.new(|cx| {
+                                let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
+                                // Still try to read any existing metadata from DB
+                                editor.read_metadata_from_db(item_id, workspace_id, window, cx);
+                                editor
+                            })
+                        })
+                    }
+                });
             }
             Err(error) => {
+                log::error!("Failed to query editor state for item_id: {:?}, workspace_id: {:?}: {}", item_id, workspace_id, error);
                 return Task::ready(Err(error));
             }
         };
@@ -1213,7 +1233,28 @@ impl SerializableItem for Editor {
                 abs_path: None,
                 contents: None,
                 ..
-            } => Task::ready(Err(anyhow!("No path or contents found for buffer"))),
+            } => {
+                log::warn!("Serialized editor has no path or contents for item_id: {:?}, workspace_id: {:?}. Creating a new editor.", item_id, workspace_id);
+                // Instead of failing, create a new empty editor
+                window.spawn(cx, {
+                    let project = project.clone();
+                    async move |cx| {
+                        // Create a new empty buffer
+                        let buffer = project
+                            .update(cx, |project, cx| project.create_buffer(cx))?
+                            .await?;
+
+                        cx.update(|window, cx| {
+                            cx.new(|cx| {
+                                let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
+                                // Still try to read any existing metadata from DB
+                                editor.read_metadata_from_db(item_id, workspace_id, window, cx);
+                                editor
+                            })
+                        })
+                    }
+                })
+            }
         }
     }
 

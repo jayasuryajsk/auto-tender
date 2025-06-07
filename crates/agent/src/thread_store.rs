@@ -397,27 +397,39 @@ impl ThreadStore {
         let this = cx.weak_entity();
         window.spawn(cx, async move |cx| {
             let database = database_future.await.map_err(|err| anyhow!(err))?;
-            let thread = database
-                .try_find_thread(id.clone())
-                .await?
-                .ok_or_else(|| anyhow!("no thread found with ID: {id:?}"))?;
+            
+            // Try to find the thread in the database
+            let thread_result = database.try_find_thread(id.clone()).await;
+            
+            match thread_result {
+                Ok(Some(thread)) => {
+                    // Thread found, deserialize it normally
+                    let thread = this.update_in(cx, |this, window, cx| {
+                        cx.new(|cx| {
+                            Thread::deserialize(
+                                id.clone(),
+                                thread,
+                                this.project.clone(),
+                                this.tools.clone(),
+                                this.prompt_builder.clone(),
+                                this.project_context.clone(),
+                                window,
+                                cx,
+                            )
+                        })
+                    })?;
 
-            let thread = this.update_in(cx, |this, window, cx| {
-                cx.new(|cx| {
-                    Thread::deserialize(
-                        id.clone(),
-                        thread,
-                        this.project.clone(),
-                        this.tools.clone(),
-                        this.prompt_builder.clone(),
-                        this.project_context.clone(),
-                        window,
-                        cx,
-                    )
-                })
-            })?;
-
-            Ok(thread)
+                    Ok(thread)
+                }
+                Ok(None) => {
+                    log::warn!("Thread not found in database: {id:?}. This may be due to database corruption or the thread being deleted.");
+                    Err(anyhow!("no thread found with ID: {id:?}"))
+                }
+                Err(err) => {
+                    log::error!("Failed to query database for thread {id:?}: {}", err);
+                    Err(anyhow!("database error while looking up thread {id:?}: {}", err))
+                }
+            }
         })
     }
 
